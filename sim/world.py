@@ -22,13 +22,13 @@ MAX_MOVES = 3        # 1 ティックに歩ける回数（それ以上は何も�
 #                       ├→ 加工（パン屋・酒場の台所）→ 食事（パン・料理）
 #   薪 ────────────────┤
 #                       └→ 夜の暖（一家に 1 本）
-MEALS = {"料理": 5, "サンドイッチ": 5, "パン": 3}  # ちゃんとした食事。食べると減る空腹度
+MEALS = {"料理": 5, "サンドイッチ": 5, "ツナサンド": 5, "パン": 3}  # ちゃんとした食事。食べると減る空腹度
 SNACKS = {"燻製魚": 2, "燻製肉": 2, "干物": 2}  # 燻製・干物はそのままでも食べられるが、腹の足しは生より少しマシな程度
 # 食材。生では食べず、家で薪を使って煮炊きする（燻製も食材として使える）
 INGREDIENTS = {"麦": "麦粥", "魚": "焼き魚", "肉": "焼き肉", "燻製魚": "燻製魚の焼き物", "燻製肉": "燻製肉の煮込み",
                "干物": "干物のあぶり"}
 # 毎晩、持っている分のうちこの割合が傷んで捨てられる。麦と薪、保存食は傷まない
-SPOIL = {"料理": 0.5, "サンドイッチ": 0.5, "魚": 0.4, "肉": 0.3, "パン": 0.2}  # 燻製・干物は傷まない
+SPOIL = {"料理": 0.5, "サンドイッチ": 0.5, "ツナサンド": 0.5, "魚": 0.4, "肉": 0.3, "パン": 0.2}  # 燻製・干物は傷まない
 # 保存食づくり：手の空いた日に時間を使って、傷む食材を長持ちする食べ物にする
 PRESERVE = {
     # 作るもの: 場所、材料、元の食材、作れない天気
@@ -39,11 +39,12 @@ PRESERVE = {
 HOME_MEAL = 4  # 家で煮炊きした食事で減る空腹度。薪 1 本で 1 人前なので、店より薪を食う
 FOOD = {**MEALS, **SNACKS}
 RETAIL_MARKUP = 1.25  # 店が仕入れた食材を店先で売るときの上乗せ
-CATEGORIES = {"食材": list(INGREDIENTS)}  # 仕事の材料に「どれでもいい」を指定するための分類
-PRICES = {"料理": 25, "サンドイッチ": 34, "パン": 24, "燻製魚": 40, "燻製肉": 38, "干物": 36, "麦": 26, "魚": 30, "肉": 28, "薪": 12}  # 村の相場（銀貨）。売り手の収支を見て自動で詰めた値
+# 仕事の材料に「どれでもいい」を指定するための分類
+CATEGORIES = {"食材": list(INGREDIENTS), "魚類": ["魚", "燻製魚", "干物"], "肉類": ["肉", "燻製肉"]}
+PRICES = {"料理": 25, "サンドイッチ": 34, "ツナサンド": 34, "パン": 24, "燻製魚": 40, "燻製肉": 38, "干物": 36, "麦": 26, "魚": 30, "肉": 28, "薪": 12}  # 村の相場（銀貨）。売り手の収支を見て自動で詰めた値
 HELP_JOBS = {"畑": {"麦": 1}, "川辺": {"魚": 1}, "森の入口": {"薪": 1}}  # 誰でもできる手伝い仕事（本業より実入りは少ない）
 # これだけ売れ残ったら「余っている」と感じる（村で 1〜2 日分の備蓄の目安）
-RESERVE = {"麦": 8, "魚": 4, "肉": 4, "薪": 8, "パン": 8, "サンドイッチ": 6, "料理": 6, "燻製魚": 10, "燻製肉": 10, "干物": 10}
+RESERVE = {"麦": 8, "魚": 4, "肉": 4, "薪": 8, "パン": 8, "サンドイッチ": 6, "ツナサンド": 6, "料理": 6, "燻製魚": 10, "燻製肉": 10, "干物": 10}
 WOOD_STORE = 5  # 薪は傷まないので、懐に余裕があれば一家で何晩分か貯めておく
 ASSEMBLY_PLACE = "広場"  # 毎朝 6 時、全員がここに集まって朝礼をする
 NEWS_DAYS = 2  # 聞いた村の様子を当てにする日数
@@ -51,7 +52,7 @@ SAY_STATE = {"不足": "足りない", "余り": "余っている"}
 FAMILY_KEEP = {"食材": 2}  # 家に持ち帰ったとき、煮炊き用に蔵へ入れる食材の数（残りは売り物として持っておく）
 DEFAULT_DEMAND = 6
 SHOP_BUFFER = 4  # 酒場が蓄えておく、傷まない食材（燻製・干物・麦）それぞれの数  # 店がまだ売れ行きを知らないときの、1 日に売れる見込み
-KEEP = {"料理": 2, "サンドイッチ": 2, "パン": 2, "燻製魚": 1, "燻製肉": 1, "干物": 1, "麦": 1, "魚": 1, "肉": 1, "薪": 1}  # 自分用に残す数。超えた分なら売る
+KEEP = {"料理": 2, "サンドイッチ": 2, "ツナサンド": 2, "パン": 2, "燻製魚": 1, "燻製肉": 1, "干物": 1, "麦": 1, "魚": 1, "肉": 1, "薪": 1}  # 自分用に残す数。超えた分なら売る
 WEATHERS = [("晴れ", 5), ("曇り", 3), ("雨", 2), ("霧", 1), ("嵐", 0.5)]
 MAX_MEMORIES = 40
 MAX_INBOX = 30
@@ -428,7 +429,7 @@ class World:
             if v["location"] not in HELP_JOBS:
                 return f"仕事は{v['workplace']}でしかできない（手伝いなら{'・'.join(HELP_JOBS)}でできる）。"
             return self._help(name)
-        recipe = next((r for r in self.recipes(name) if not self._missing(name, r["needs"])), None)
+        recipe = self._pick_recipe(name)
         if recipe is None:
             lacking = self.lacking(name)
             for need in lacking:
@@ -463,6 +464,20 @@ class World:
         """歩いた分だけ働く時間が減る。残り時間に応じて実入りを減らす（端数は確率で丸める）。"""
         x = n * self.minutes_left(name) / TURN_MINUTES
         return int(x) + (random.random() < x - int(x))
+
+    def _pick_recipe(self, name):
+        """材料のそろう作り方のうち、基本（いちばん下）以外があれば、具の手持ちが多いほうを選ぶ。"""
+        recipes = self.recipes(name)
+        ready = [r for r in recipes if not self._missing(name, r["needs"])]
+        if not ready:
+            return None
+        special = [r for r in ready if r is not recipes[-1]]
+        if not special:
+            return ready[0]
+        def filling(r):
+            return sum(self.has(name, i) for need in r["needs"] for i in self._members(need)
+                       if need in CATEGORIES and need != "食材")
+        return max(special, key=filling)
 
     def _streak(self, name):
         """同じ仕事場で続けて働くと、段取りがよくなって実入りが 1 増える。"""
@@ -931,8 +946,14 @@ class World:
                     if short > 0:
                         for i in items:  # 「食材」のようにどれでもいい材料は、手に入りやすい順に頼む
                             order[i] = order.get(i, 0) + short / len(items)
-                if self.uses(name, "肉") and len(self.recipes(name)) > 1:  # サンドイッチ用の肉
-                    order["肉"] = order.get("肉", 0) + max(0, batches - box.get("肉", 0))
+                for r in self.recipes(name)[:-1]:  # サンドイッチの具（肉・魚）を半分ずつ頼む
+                    for need in r["needs"]:
+                        if need in ("魚類", "肉類"):
+                            raw = self._members(need)[0]
+                            have_now = sum(box.get(i, 0) for i in self._members(need))
+                            want_n = -(-batches // 2)
+                            if want_n > have_now:
+                                order[raw] = order.get(raw, 0) + want_n - have_now
                 order = {i: round(q + 0.49) for i, q in order.items() if round(q + 0.49) > 0}
                 orders[shop] = order
                 for i, q in order.items():
