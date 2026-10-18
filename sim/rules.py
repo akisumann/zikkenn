@@ -20,19 +20,22 @@
   4. 行商     … 仕事のあと、余った品を買ってくれる人のところへ売りに行く
   5. 習慣     … その人ならではの癖（seed の habits）
   6. 日課     … 時間割どおりの場所へ行き、働く。材料が足りなければ仕入れに行く。
-                本業の品が売れ残っていれば作らず、村でいちばん足りない仕事（畑・川・森）を手伝う
+                その日の仕事場は朝に一度だけ決める。本業の品が余っていて、どこかが足りないと
+                聞いていれば、そこ（畑・川・森）を手伝う。同じ所で続けて働くと、はかどる
+
+朝は身支度しながら家族と話す（時間は使わない）。村の様子（何が足りない・余っている）は、
+自分で見たことと、人から聞いたことでしか知らない。話をすると、それが相手に伝わる。
 """
 
 import random
 
 from .brains import QUICK_LIMIT, run_tool
-from .world import CATEGORIES, HELP_JOBS, INGREDIENTS, MEALS
+from .world import CATEGORIES, DAY_HOURS, HELP_JOBS, INGREDIENTS, MEALS, RESERVE
 
 # 時間割の既定値。「家」「仕事場」「自由」か、場所の名前を書く。seed の routine で上書きできる
 DEFAULT_ROUTINE = {6: "家", 8: "仕事場", 10: "仕事場", 12: "仕事場", 14: "仕事場",
                    16: "自由", 18: "酒場", 20: "家"}
 MEAL_HOURS = (6, 12, 18)
-OVERSTOCK = 6  # 本業の品がこれだけ売れ残っていたら、作るのをやめて足りない仕事を手伝う
 OUTDOOR = ("畑", "川辺", "森の入口")
 FREE_PLACES = ["広場", "広場", "川辺", "酒場", "パン屋", "森の入口"]
 
@@ -58,11 +61,25 @@ RAINY = ["雨音を聞きながら道具の手入れをしている", "雨宿り
 
 class RuleBrain:
     def take_turn(self, world, name):
+        if world.continue_travel(name):  # 遠出の途中なら、このターンは歩くだけ
+            return
         self.react(world, name)
         for _ in range(QUICK_LIMIT):  # ついでの用事を済ませてから
             if not self.errand(world, name):
                 break
+        self.morning_talk(world, name)
         self.main_action(world, name)  # この 2 時間の過ごし方を 1 つ選ぶ
+
+    def morning_talk(self, world, name):
+        """朝は身支度しながら家族と話す（時間は使わない）。村の様子はここでも伝わる。"""
+        if world.hour != DAY_HOURS[0]:
+            return
+        v = world.villagers[name]
+        family = [o for o in world.people_at(v["location"], exclude=name) if world.family(name, o)]
+        if family and random.random() < 0.7:
+            talk = self.talk_while_working(world, name, family)
+            if talk["message"]:
+                run_tool(world, name, "say", talk)
 
     # ---------- ついでの用事（食べる・買う・売る・渡す） ----------
 
@@ -319,7 +336,11 @@ class RuleBrain:
         heard = [e for e in v["inbox"] + v.get("rumors", [])
                  if e["kind"] == "say" and e["actor"] not in (name, target)
                  and not is_small_talk(world, e["quote"])]
-        if heard and random.random() < v.get("gossip", 0.3):
+        news = world.recent_news(name)
+        if news and random.random() < 0.4:
+            item, (state, _, src) = random.choice(list(news.items()))
+            msg = f"{item}が{'足りない' if state == '不足' else '余ってる'}{'んだ' if src == '自分で見た' else 'らしいよ'}。"
+        elif heard and random.random() < v.get("gossip", 0.3):
             e = random.choice(heard)
             msg = f"ねえ聞いた？ {e['actor']}が「{e['quote']}」って言ってたよ。"
         elif v.get("lines") and random.random() < 0.6:
@@ -369,14 +390,27 @@ class RuleBrain:
     # ---------- 7. 日課 ----------
 
     def where_needed(self, world, name):
-        """本業の品が売れ残っていたら、村でいちばん足りない手伝い仕事へ回る。"""
+        """その日の仕事場を、朝に一度だけ決める。
+        本業の品が余っていて、どこかが足りないと聞いていれば、そこを手伝いに行く（近い方を選ぶ）。
+        余りすぎているのに足りない所を知らなければ、仕事を休んで人の集まる広場へ出る（話を聞くため）。"""
         v = world.villagers[name]
-        unsold = sum(max(0, world.surplus(name, item)) for item in v["produce"])
-        if unsold < OVERSTOCK:
-            return v["workplace"]
-        options = {place: sum(world.stock(i) for i in out) for place, out in HELP_JOBS.items()
-                   if not any(i in v["produce"] for i in out)}
-        return min(options, key=options.get) if options else v["workplace"]
+        if v.get("today_job", [None])[0] == world.data["day"]:
+            return v["today_job"][1]
+        job = v["workplace"]
+        over = [i for i in v["produce"] if world.surplus(name, i) >= RESERVE.get(i, 99)]
+        if over:
+            news = world.recent_news(name)
+            short = [place for place, out in HELP_JOBS.items()
+                     if not any(i in v["produce"] for i in out)
+                     and any(news.get(i, [None])[0] == "不足" for i in out)]
+            if short:
+                job = min(short, key=lambda p: world.travel_turns(v["home"], p))
+                world.log(f"🗓 **{name}** は今日は{job}を手伝うことにした（{'・'.join(over)}が余っているので）")
+            elif any(world.surplus(name, i) >= RESERVE[i] * 2 for i in over):
+                job = "広場"
+                world.log(f"🗓 **{name}** は{'・'.join(over)}が余りすぎているので、今日は仕事を休んだ")
+        v["today_job"] = [world.data["day"], job]
+        return job
 
     def plan(self, world, v):
         """時間割で、いまどこにいるべきか。"""

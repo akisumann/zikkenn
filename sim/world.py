@@ -25,6 +25,10 @@ FOOD = {**MEALS, **INGREDIENTS}
 CATEGORIES = {"食材": list(INGREDIENTS)}  # 仕事の材料に「どれでもいい」を指定するための分類
 PRICES = {"料理": 40, "パン": 20, "麦": 20, "魚": 30, "肉": 30, "薪": 20}  # 村の相場（銀貨）
 HELP_JOBS = {"畑": {"麦": 1}, "川辺": {"魚": 1}, "森の入口": {"薪": 1}}  # 誰でもできる手伝い仕事（本業より実入りは少ない）
+# これだけ売れ残ったら「余っている」と感じる（村で 1〜2 日分の備蓄の目安）
+RESERVE = {"麦": 8, "魚": 4, "肉": 4, "薪": 8, "パン": 8, "料理": 6}
+NEWS_DAYS = 2  # 聞いた村の様子を当てにする日数
+SAY_STATE = {"不足": "足りない", "余り": "余っている"}
 KEEP = {"料理": 2, "パン": 2, "麦": 1, "魚": 1, "肉": 1, "薪": 1}  # 自分用に残す数。超えた分なら売る
 WEATHERS = [("晴れ", 5), ("曇り", 3), ("雨", 2), ("霧", 1), ("嵐", 0.5)]
 MAX_MEMORIES = 40
@@ -57,12 +61,14 @@ class World:
                 "activity": "目を覚ましたところ",
                 "memories": [],
                 "inbox": [],
+                "known": {},  # 聞いたり見たりした村の様子 {品物: [不足/余り, 日, 誰から]}
                 "impressions": {k: {"score": s, "note": n} for k, (s, n) in v["impressions"].items()},
             }
         data = {
             "name": seed["name"],
             "description": seed["description"],
             "places": seed["places"],
+            "zones": {place: zone for zone, places in seed["zones"].items() for place in places},
             "day": 1,
             "hour_index": 0,
             "weather": "晴れ",
@@ -86,6 +92,27 @@ class World:
 
     def clock(self):
         return f"{self.data['day']}日目 {self.hour:02d}:00"
+
+    @property
+    def tick(self):
+        return self.data["day"] * len(DAY_HOURS) + self.data["hour_index"]
+
+    def travel_turns(self, a, b):
+        """移動にかかるターン数。同じ区画どうしか中心との行き来は 1（2 時間）、外れどうしは 2（4 時間）。"""
+        za, zb = self.data["zones"].get(a), self.data["zones"].get(b)
+        return 1 if za == zb or "中心" in (za, zb) else 2
+
+    def continue_travel(self, name):
+        """遠出の途中なら、このターンは歩き続けて目的地に着く。歩いていたら True。"""
+        v = self.villagers[name]
+        travel = v.pop("travel", None)
+        if not travel:
+            return False
+        v["location"] = travel["to"]
+        v["activity"] = "やって来たところ"
+        self.broadcast(travel["to"], f"{name}がやって来た。", exclude=name)
+        self.log(f"🚶 **{name}** {travel['to']}に着いた")
+        return True
 
     def price(self, item):
         return PRICES.get(item)
@@ -125,7 +152,7 @@ class World:
         others = self.people_at(here, exclude=name)
         lines = [
             f"【いま】{self.clock()}（天気：{self.data['weather']}）",
-            f"【居場所】{here} — {self.data['places'][here]}",
+            f"【居場所】{here} — {self.data['places'].get(here, '')}",
         ]
         if others:
             lines.append("【ここにいる人】" + "、".join(
@@ -138,6 +165,10 @@ class World:
         inv = "、".join(f"{k}×{n}" for k, n in v["inventory"].items() if n > 0) or "なし"
         lines.append(f"【持ち物】{inv}、銀貨 {v['money']} 枚")
         lines.append(f"【村の相場】{self.price_list()}")
+        news = self.recent_news(name)
+        if news:
+            lines.append("【知っている村の様子】" + "、".join(
+                f"{item}が{SAY_STATE[state]}（{src}）" for item, (state, _, src) in news.items()))
         lines.append("【前の行動から今までに見聞きしたこと】")
         lines += [f"- {e['t']}" for e in v["inbox"]] or ["- 特になし"]
         lines.append("【あなたの記憶メモ（古い順）】")
@@ -145,7 +176,8 @@ class World:
         lines.append("【人への印象】（-5 嫌い 〜 +5 好き）")
         lines += [f"- {k}: {i['score']:+d} {i['note']}" for k, i in v["impressions"].items()] or ["- なし"]
         others_far = [f"{n}" for n in self.villagers if n != name and n not in others]
-        lines.append("【村の場所】" + "、".join(self.data["places"]))
+        lines.append("【村の場所】" + "、".join(
+            f"{p}（{'2' if self.travel_turns(here, p) == 1 else '4'}時間）" for p in self.data["places"] if p != here))
         lines.append("【ほかの村人】" + "、".join(others_far))
         return "\n".join(lines)
 
@@ -159,6 +191,12 @@ class World:
             return "もうそこにいる。"
         src = v["location"]
         self.broadcast(src, f"{name}が{destination}へ向かった。", exclude=name)
+        if self.travel_turns(src, destination) == 2:  # 遠出：次のターンも歩いて、着くのはその後
+            v["location"] = "道中"
+            v["travel"] = {"to": destination}
+            v["activity"] = f"{destination}へ向かって歩いている"
+            self.log(f"🚶 **{name}** {src} → {destination}（遠いので 4 時間かかる）")
+            return f"{destination}へ向かって歩いている。着くのは次の時間だ。"
         v["location"] = destination
         v["activity"] = "やって来たところ"
         self.broadcast(destination, f"{name}がやって来た。", exclude=name)
@@ -176,6 +214,8 @@ class World:
         self.broadcast(here, f"{name}{target}「{message}」", exclude=name,
                        kind="say", actor=name, to=to, quote=message)
         self.log(f"💬 **{name}**{target}（{here}）「{message}」")
+        for listener in present:
+            self.share_news(name, listener)
         return "言った。" if present else "誰もいないので、声は風に消えた。"
 
     def act_work(self, name):
@@ -188,35 +228,71 @@ class World:
             return self._help(name)
         lacking = self.lacking(name)
         if lacking:
+            for need in lacking:
+                for item in self._members(need):
+                    self.note(name, item, "不足")
             return f"仕事に使う{'、'.join(lacking)}が足りない。"
         for need, n in v.get("needs", {}).items():
             for _ in range(n):
                 item = max(self._members(need), key=lambda i: v["inventory"].get(i, 0))
                 v["inventory"][item] -= 1
+        bonus = self._streak(name)
         gained = []
         for item, n in v["produce"].items():
             if self.data["weather"] in ("雨", "嵐") and v["workplace"] in ("畑", "川辺", "森の入口"):
                 n = max(1, n // 2)
+            n += bonus
             v["inventory"][item] = v["inventory"].get(item, 0) + n
             gained.append(f"{item}×{n}")
+            if self.surplus(name, item) >= RESERVE.get(item, 99):
+                self.note(name, item, "余り")
         v["energy"] = max(0, v["energy"] - 1)
         v["activity"] = f"{v['job']}の仕事をしている"
         self.broadcast(v["location"], f"{name}が仕事をしている。", exclude=name)
-        self.log(f"🔨 **{name}** 働いた（{'、'.join(gained)}）")
-        return f"働いて {'、'.join(gained)} を得た。"
+        self.log(f"🔨 **{name}** 働いた（{'、'.join(gained)}）" + ("　続けて働いてはかどった" if bonus else ""))
+        return f"働いて {'、'.join(gained)} を得た。" + ("続けて働いたのではかどった。" if bonus else "")
+
+    def _streak(self, name):
+        """同じ仕事場で続けて働くと、段取りがよくなって実入りが 1 増える。"""
+        v = self.villagers[name]
+        bonus = 1 if v.get("last_work") == [v["location"], self.tick - 1] else 0
+        v["last_work"] = [v["location"], self.tick]
+        return bonus
 
     def _help(self, name):
         v = self.villagers[name]
         place = v["location"]
+        bonus = self._streak(name)
         gained = []
         for item, n in HELP_JOBS[place].items():
+            n += bonus
             v["inventory"][item] = v["inventory"].get(item, 0) + n
             gained.append(f"{item}×{n}")
         v["energy"] = max(0, v["energy"] - 1)
         v["activity"] = f"{place}で手伝い仕事をしている"
         self.broadcast(place, f"{name}が手伝い仕事をしている。", exclude=name)
-        self.log(f"🤝 **{name}** {place}で手伝った（{'、'.join(gained)}）")
-        return f"手伝って {'、'.join(gained)} を得た。"
+        self.log(f"🤝 **{name}** {place}で手伝った（{'、'.join(gained)}）" + ("　続けて働いてはかどった" if bonus else ""))
+        return f"手伝って {'、'.join(gained)} を得た。" + ("続けて働いたのではかどった。" if bonus else "")
+
+    # ---------- 村の様子のうわさ ----------
+
+    def note(self, name, item, state, source="自分で見た"):
+        self.villagers[name].setdefault("known", {})[item] = [state, self.data["day"], source]
+
+    def recent_news(self, name):
+        known = self.villagers[name].get("known", {})
+        return {i: k for i, k in known.items() if self.data["day"] - k[1] < NEWS_DAYS}
+
+    def share_news(self, speaker, listener):
+        """話をすると、相手の知っている村の様子が伝わる（新しい話だけ）。"""
+        learned = []
+        mine = self.villagers[listener].setdefault("known", {})
+        for item, (state, day, src) in self.recent_news(speaker).items():
+            if item not in mine or mine[item][1] < day or (mine[item][1] == day and mine[item][0] != state):
+                mine[item] = [state, day, f"{speaker}から聞いた"]
+                learned.append(f"{item}が{SAY_STATE[state]}")
+        if learned:
+            self.log(f"📣 *{listener}は{speaker}から聞いた：{'、'.join(learned)}*")
 
     def price_list(self):
         return "、".join(f"{k} {p}枚" for k, p in PRICES.items())
@@ -361,6 +437,8 @@ class World:
             self.broadcast(v["location"], f"{name}が{seller}に{item}を売ってくれと頼んだが、断られた。",
                            exclude=name, kind="refuse", actor=name, to=seller, quote=item)
             self.log(f"🙅 **{seller}** は **{name}** に{item}を売らなかった")
+            if self.surplus(seller, item) <= 0:
+                self.note(name, item, "不足")
             return f"{seller}に断られた。"
         v["money"] -= price
         self.villagers[seller]["money"] += price
@@ -437,9 +515,12 @@ class World:
                 self.villagers[giver]["inventory"]["薪"] -= 1
             else:
                 self.log(f"🥶 {home}には薪がなく、寒い夜になった")
+                for name in family:
+                    self.note(name, "薪", "不足")
             for name in family:
                 v = self.villagers[name]
                 v["location"] = home
+                v.pop("travel", None)
                 v["hunger"] = min(10, v["hunger"] + 1)
                 v["energy"] = 10 if warm else 7
                 v["activity"] = "目を覚ましたところ"
