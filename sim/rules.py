@@ -35,7 +35,7 @@
 import random
 
 from .brains import QUICK_LIMIT, run_tool
-from .world import MAX_MOVES
+from .world import COOK_WOOD, MAX_MOVES, WOOD_LOT
 from .world import CATEGORIES, DAY_HOURS, HELP_JOBS, INGREDIENTS, MEALS, PRESERVE, RESERVE, SNACKS, SPOIL
 
 # 時間割の既定値。「家」「仕事場」「自由」か、場所の名前を書く。seed の routine で上書きできる
@@ -125,7 +125,7 @@ class RuleBrain:
     def cook(self, world, name):
         v = world.villagers[name]
         wood = world.household_stock(name, "薪")
-        if wood < 2 and not (wood >= 1 and v["hunger"] >= 8):  # 夜を越す 1 本は残したい
+        if wood < COOK_WOOD * 2 and not (wood >= COOK_WOOD and v["hunger"] >= 8):  # 夜を越す分は残したい
             return False
         for item in INGREDIENTS:
             if world.food_owner(name, item):
@@ -156,7 +156,8 @@ class RuleBrain:
             for seller in others:
                 for item in items:
                     if world.will_sell(seller, name, item) and world.will_buy(name, item):
-                        amount = max(1, min(3, world.surplus(seller, item), v["money"] // world.price(item)))
+                        lot = 3 * WOOD_LOT if item == "薪" else 3
+                        amount = max(1, min(lot, world.surplus(seller, item), v["money"] // world.price(item)))
                         run_tool(world, name, "buy", {"seller": seller, "item": item, "amount": amount})
                         return True
         return False
@@ -321,7 +322,10 @@ class RuleBrain:
         for item in wants:
             for seller in others:
                 if world.will_sell(seller, name, item) and v["money"] >= world.price(item):
-                    run_tool(world, name, "buy", {"seller": seller, "item": item, "amount": 1})
+                    amount = 1
+                    if item == "薪":  # ひと束（一晩分）を、売り手の余りと手持ちの範囲で
+                        amount = max(1, min(WOOD_LOT, world.surplus(seller, item), v["money"] // world.price(item)))
+                    run_tool(world, name, "buy", {"seller": seller, "item": item, "amount": amount})
                     return True
         return False
 
