@@ -19,20 +19,27 @@ DAY_HOURS = [6, 8, 10, 12, 14, 16, 18, 20]  # 1 ティック = 2 時間。22 時
 #                       ├→ 加工（パン屋・酒場の台所）→ 食事（パン・料理）
 #   薪 ────────────────┤
 #                       └→ 夜の暖（一家に 1 本）
-MEALS = {"料理": 5, "サンドイッチ": 5, "パン": 3}  # 店で作る食事。食べると減る空腹度
+MEALS = {"料理": 5, "サンドイッチ": 5, "パン": 3, "燻製肉": 4, "干物": 3}  # そのまま食べられる食事。食べると減る空腹度
 INGREDIENTS = {"麦": "麦粥", "魚": "焼き魚", "肉": "焼き肉"}  # 食材。生では食べず、家で薪を使って煮炊きする
+# 毎晩、持っている分のうちこの割合が傷んで捨てられる。麦と薪、保存食は傷まない
+SPOIL = {"料理": 0.5, "サンドイッチ": 0.5, "魚": 0.4, "肉": 0.3, "パン": 0.2}
+# 保存食づくり：手の空いた日に時間を使って、傷む食材を長持ちする食べ物にする
+PRESERVE = {
+    "魚": {"place": "川辺", "needs": {"魚": 2}, "makes": {"干物": 2}, "weather_ng": ("雨", "嵐", "霧"), "how": "魚を開いて干した"},
+    "肉": {"place": "家", "needs": {"肉": 2, "薪": 1}, "makes": {"燻製肉": 2}, "weather_ng": (), "how": "肉を燻した"},
+}
 HOME_MEAL = 4  # 家で煮炊きした食事で減る空腹度。薪 1 本で 1 人前なので、店より薪を食う
 FOOD = dict(MEALS)
 CATEGORIES = {"食材": list(INGREDIENTS)}  # 仕事の材料に「どれでもいい」を指定するための分類
-PRICES = {"料理": 25, "サンドイッチ": 34, "パン": 24, "麦": 26, "魚": 30, "肉": 28, "薪": 12}  # 村の相場（銀貨）。売り手の収支を見て自動で詰めた値
+PRICES = {"料理": 25, "サンドイッチ": 34, "パン": 24, "燻製肉": 36, "干物": 32, "麦": 26, "魚": 30, "肉": 28, "薪": 12}  # 村の相場（銀貨）。売り手の収支を見て自動で詰めた値
 HELP_JOBS = {"畑": {"麦": 1}, "川辺": {"魚": 1}, "森の入口": {"薪": 1}}  # 誰でもできる手伝い仕事（本業より実入りは少ない）
 # これだけ売れ残ったら「余っている」と感じる（村で 1〜2 日分の備蓄の目安）
-RESERVE = {"麦": 8, "魚": 4, "肉": 4, "薪": 8, "パン": 8, "サンドイッチ": 6, "料理": 6}
+RESERVE = {"麦": 8, "魚": 4, "肉": 4, "薪": 8, "パン": 8, "サンドイッチ": 6, "料理": 6, "燻製肉": 10, "干物": 10}
 WOOD_STORE = 5  # 薪は傷まないので、懐に余裕があれば一家で何晩分か貯めておく
 ASSEMBLY_PLACE = "広場"  # 毎朝 6 時、全員がここに集まって朝礼をする
 NEWS_DAYS = 2  # 聞いた村の様子を当てにする日数
 SAY_STATE = {"不足": "足りない", "余り": "余っている"}
-KEEP = {"料理": 2, "サンドイッチ": 2, "パン": 2, "麦": 1, "魚": 1, "肉": 1, "薪": 1}  # 自分用に残す数。超えた分なら売る
+KEEP = {"料理": 2, "サンドイッチ": 2, "パン": 2, "燻製肉": 2, "干物": 2, "麦": 1, "魚": 1, "肉": 1, "薪": 1}  # 自分用に残す数。超えた分なら売る
 WEATHERS = [("晴れ", 5), ("曇り", 3), ("雨", 2), ("霧", 1), ("嵐", 0.5)]
 MAX_MEMORIES = 40
 MAX_INBOX = 30
@@ -307,6 +314,47 @@ class World:
         """村じゅうにある item の数。"""
         return sum(v["inventory"].get(item, 0) for v in self.villagers.values())
 
+    def act_preserve(self, name, item):
+        """手の空いた時間に、魚を干物に、肉を燻製にする（2 時間かかる）。"""
+        v = self.villagers[name]
+        if item not in PRESERVE:
+            return "保存食にできるのは魚（干物）と肉（燻製）だけ。"
+        rule = PRESERVE[item]
+        place = v["home"] if rule["place"] == "家" else rule["place"]
+        if v["location"] != place:
+            return f"{item}の保存食づくりは{rule['place']}でしかできない。"
+        if self.data["weather"] in rule["weather_ng"]:
+            return f"{self.data['weather']}の日は干せない。"
+        for need, n in rule["needs"].items():
+            have = self.household_stock(name, need) if need == "薪" else v["inventory"].get(need, 0)
+            if have < n:
+                return f"{need}が足りない（{n}つ要る）。"
+        for need, n in rule["needs"].items():
+            for _ in range(n):
+                owner = name if v["inventory"].get(need, 0) > 0 else self.food_owner(name, need)
+                self.villagers[owner]["inventory"][need] -= 1
+        made = []
+        for out, n in rule["makes"].items():
+            v["inventory"][out] = v["inventory"].get(out, 0) + n
+            made.append(f"{out}×{n}")
+        v["energy"] = max(0, v["energy"] - 1)
+        v["activity"] = f"{rule['how'].rstrip('た')}ている"
+        self.broadcast(v["location"], f"{name}が{rule['how'].rstrip('た')}ている。", exclude=name)
+        self.log(f"🐟 **{name}** {rule['how']}（{'、'.join(made)}）")
+        return f"{rule['how']}。{'、'.join(made)}ができた。傷まずに長持ちする。"
+
+    def spoil(self):
+        """夜、傷みやすい食べ物の一部が傷んで捨てられる。"""
+        for name, v in self.villagers.items():
+            lost = []
+            for item, rate in SPOIL.items():
+                n = sum(random.random() < rate for _ in range(v["inventory"].get(item, 0)))
+                if n:
+                    v["inventory"][item] -= n
+                    lost.append(f"{item}×{n}")
+            if lost:
+                self.log(f"🦠 **{name}** の{'、'.join(lost)}が傷んで捨てた")
+
     def act_cook(self, name, item):
         """家で、食材 1 つと薪 1 本を使って煮炊きし、その場で食べる。家族の食材や薪も使える。"""
         v = self.villagers[name]
@@ -561,6 +609,7 @@ class World:
             return False
         # 夜：全員家に帰って眠る
         self.log("🌙 夜が来た。村人たちはそれぞれの家で眠りについた。")
+        self.spoil()
         homes = {}
         for name, v in self.villagers.items():
             homes.setdefault(v["home"], []).append(name)

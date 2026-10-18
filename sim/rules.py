@@ -18,11 +18,13 @@
   2. 疲労     … くたくたなら家に帰って休む
   3. 会話     … 話しかけられたら返事をする。話し好きは話しかけ、噂好きは噂を広める。
                 仕事の時間は話し込まず仕事場へ。同じ仕事場に人がいれば、働きながら話す
+  3.5 保存食 … 昼過ぎ、余った魚や肉が傷む前に、干物（川辺）や燻製（家）にする
   4. 行商     … 仕事のあと、余った品を買ってくれる人のところへ売りに行く
   5. 習慣     … その人ならではの癖（seed の habits）
   6. 日課     … 時間割どおりの場所へ行き、働く。材料が足りなければ仕入れに行く。
                 その日の仕事場は朝に一度だけ決める。本業の品が余っていて、どこかが足りないと
-                聞いていれば、そこ（畑・川・森）を手伝う。同じ所で続けて働くと、はかどる
+                聞いていれば、そこ（畑・川・森）を手伝う。足りない所がなければ、余った魚や肉を
+                干物・燻製にする。それもできず余りすぎていれば休む。同じ所で続けて働くと、はかどる
 
 毎朝 6 時は広場で朝礼。全員の手持ちと困りごとから、村で何が足りない・余っているかがわかり、
 その場で受け渡しをする。それ以外の時間に知る村の様子は、自分で見たことと人から聞いたことだけ。
@@ -31,7 +33,7 @@
 import random
 
 from .brains import QUICK_LIMIT, run_tool
-from .world import CATEGORIES, DAY_HOURS, HELP_JOBS, INGREDIENTS, MEALS, RESERVE
+from .world import CATEGORIES, DAY_HOURS, HELP_JOBS, INGREDIENTS, MEALS, PRESERVE, RESERVE, SPOIL
 
 # 時間割の既定値。「家」「仕事場」「自由」か、場所の名前を書く。seed の routine で上書きできる
 DEFAULT_ROUTINE = {6: "広場", 8: "仕事場", 10: "仕事場", 12: "仕事場", 14: "仕事場",
@@ -192,6 +194,18 @@ class RuleBrain:
                 self.chat(world, name, others)
                 return
 
+        # 3.5 昼過ぎ、余った魚や肉が傷む前に、干物や燻製にする
+        item = self.preserve_plan(world, name) if world.hour in (14, 16) else None
+        if item:
+            rule = PRESERVE[item]
+            place = v["home"] if rule["place"] == "家" else rule["place"]
+            if here == place:
+                act("preserve", item=item)
+                return
+            if world.travel_turns(here, place) == 1:
+                act("move", destination=place)
+                return
+
         # 4. 仕事のあと、余った品を売りに行く
         if world.hour >= 14 and self.market_trip(world, name):
             return
@@ -227,8 +241,8 @@ class RuleBrain:
     # ---------- 1〜4. 体と食べ物 ----------
 
     def eat_something(self, world, name):
-        """食事（腹持ちのいい順）をとる。"""
-        food = [f for f in sorted(MEALS, key=MEALS.get, reverse=True) if world.food_owner(name, f)]
+        """食事をとる。傷みやすいものから先に、同じなら腹持ちのいいものから。"""
+        food = [f for f in sorted(MEALS, key=lambda f: (-SPOIL.get(f, 0), -MEALS[f])) if world.food_owner(name, f)]
         if not food:
             return False
         run_tool(world, name, "eat", {"item": food[0]})
@@ -428,11 +442,30 @@ class RuleBrain:
             if short:
                 job = min(short, key=lambda p: world.travel_turns(v["home"], p))
                 world.log(f"🗓 **{name}** は今日は{job}を手伝うことにした（{'・'.join(over)}が余っているので）")
+            elif self.preserve_plan(world, name):
+                item = self.preserve_plan(world, name)
+                rule = PRESERVE[item]
+                job = v["home"] if rule["place"] == "家" else rule["place"]
+                world.log(f"🗓 **{name}** は{item}が余っているので、今日は保存食を作ることにした")
+                v["today_job"] = [world.data["day"], job, item]
+                return job
             elif any(world.surplus(name, i) >= RESERVE[i] * 2 for i in over):
                 job = "広場"
                 world.log(f"🗓 **{name}** は{'・'.join(over)}が余りすぎているので、今日は仕事を休んだ")
         v["today_job"] = [world.data["day"], job]
         return job
+
+    def preserve_plan(self, world, name):
+        """余った魚や肉を保存食にできるなら、その食材を返す。"""
+        v = world.villagers[name]
+        for item, rule in PRESERVE.items():
+            if world.data["weather"] in rule["weather_ng"]:
+                continue
+            enough = all((world.household_stock(name, n) if n == "薪" else v["inventory"].get(n, 0)) >= k
+                         for n, k in rule["needs"].items())
+            if enough and world.surplus(name, item) >= 2:
+                return item
+        return None
 
     def plan(self, world, v):
         """時間割で、いまどこにいるべきか。"""
@@ -472,6 +505,12 @@ class RuleBrain:
 
         if dest != here:
             run_tool(world, name, "move", {"destination": dest})
+        elif plan == "仕事場" and len(v.get("today_job", [])) > 2 and here == dest:
+            item = v["today_job"][2]  # 保存食づくりの日
+            if self.preserve_plan(world, name) == item:
+                run_tool(world, name, "preserve", {"item": item})
+            else:
+                run_tool(world, name, "do", {"activity": random.choice(IDLE.get(here, HOME_IDLE))})
         elif here == v["workplace"] and plan == "仕事場" and not world.outputs(name):
             run_tool(world, name, "do", {"activity": random.choice(CHORES)})  # 品物を作らない人は家のことをする
         elif here == dest and plan == "仕事場" and here in HELP_JOBS and here != v["workplace"] and v["energy"] > 2:
