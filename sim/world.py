@@ -268,6 +268,22 @@ class World:
             if move:
                 self._add(box, item, move); inv[item] -= move
 
+    def pack_out(self, name):
+        """家を出るとき、自分が獲った・作った品のうち、家に置いておく分を超えた分を売り物として持ち出す。
+        家に残すのは、食材なら煮炊き用の 2 つ、薪なら一家の二晩分。"""
+        v = self.villagers[name]
+        if v["location"] != v["home"]:
+            return
+        box = self.data["stores"].setdefault(v["home"], {})
+        for item in self.made_goods(name):
+            keep = NIGHT_WOOD * 2 if item == "薪" else FAMILY_KEEP["食材"] if item in INGREDIENTS else None
+            if keep is None:
+                continue
+            n = box.get(item, 0) - keep
+            if n > 0:
+                box[item] -= n
+                self._add(v["inventory"], item, n)
+
     def home_stock(self, name, item):
         """name の家の蔵にある item の数。"""
         return self.data["stores"].get(self.villagers[name]["home"], {}).get(item, 0)
@@ -404,6 +420,7 @@ class World:
         if v.get("moves", 0) >= 2 and destination in v.get("visited", []):
             return f"{destination}にはさっき行ったばかりだ。行ったり来たりしていても仕方がない。"
         src = v["location"]
+        self.pack_out(name)
         v["moves"] = v.get("moves", 0) + 1
         v.setdefault("visited", []).append(destination)
         self.broadcast(src, f"{name}が{destination}へ向かった。", exclude=name)
@@ -959,6 +976,7 @@ class World:
         受け渡しは、この時間に広場で顔を合わせた者どうしで行う（ついでの用事）。"""
         for name, v in self.villagers.items():
             self._breakfast(name)
+            self.pack_out(name)
             v["location"] = ASSEMBLY_PLACE
             v["activity"] = "朝礼に出ている"
         have, want = {}, {}
