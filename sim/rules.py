@@ -9,7 +9,8 @@
   3. 分ける   … 家族、頼んできた人、好きな人が腹ぺこなら食事を分ける
   4. 仕入れる … 加工する人は、仕事の材料を 2 回分を目安に仕入れる
   5. 売る     … 余った品を欲しがる人に売る（食材は加工する人へ、薪は家々へ、食事は空腹な人へ）
-  6. 備える   … 夜の薪がなければ買う。懐に余裕があれば夕方の酒場で料理を頼む
+  0. 晩ごはん … 夕方に酒場にいて腹が減っていれば、払える限り酒場で料理を頼んで食べる
+  6. 備える   … 夜の薪がなければ買う
 
 この 2 時間の過ごし方（上から順に、当てはまるものを 1 つ）
   0. 反応     … 見聞きしたことに心を動かす（印象・記憶。ターンは使わない）
@@ -101,6 +102,9 @@ class RuleBrain:
         meal_time = world.hour in MEAL_HOURS
         has_meal = any(world.food_owner(name, f) for f in MEALS)
 
+        # 0. 夕方に酒場にいて腹が減っていれば、晩ごはんは酒場で食べる（手持ちの食べ物は明日に取っておく）
+        if self.dinner(world, name, others):
+            return True
         # 1. 空腹なら食べる（食事時は少しの空腹でも）。本当に飢えたら食材をかじる
         if v["hunger"] >= 5 or (meal_time and v["hunger"] >= 3):
             if self.eat_something(world, name):
@@ -132,6 +136,23 @@ class RuleBrain:
                 run_tool(world, name, "cook", {"item": item})
                 return True
         return False
+
+    def dinner(self, world, name, others):
+        """夕方、酒場で晩ごはんを頼んで食べる（1 日 1 回、払えるなら）。"""
+        v = world.villagers[name]
+        owner = world.shop_owner(v["location"])
+        if world.hour not in (18, 20) or v["hunger"] < 2 or v.get("dinner_day") == world.data["day"]:
+            return False
+        if owner is None or owner == name or owner not in others or not world.villagers[owner].get("to_order"):
+            return False
+        dish = next((d for d in world.outputs(owner) if world.will_sell(owner, name, d)), None)
+        if dish is None or v["money"] < world.price(dish):
+            return False
+        result = run_tool(world, name, "buy", {"seller": owner, "item": dish, "amount": 1})
+        if "買った" in result:
+            run_tool(world, name, "eat", {"item": dish})
+            v["dinner_day"] = world.data["day"]
+        return True
 
     def share(self, world, name, others):
         v = world.villagers[name]
@@ -170,6 +191,14 @@ class RuleBrain:
         here = v["location"]
         others = world.people_at(here, exclude=name)
         working = self.plan(world, v) in ("仕事場", v["workplace"]) and v["energy"] > 2  # 仕事の時間
+
+        # 0.5 注文を受けて料理を出す店の主人は、夕方（16〜20 時）は店を空けない
+        if world.villagers[name].get("to_order") and world.hour >= 16 and v["energy"] > 1:
+            if here != v["workplace"]:
+                act("move", destination=v["workplace"])
+            else:
+                act("do", activity="店を開けて客を待っている")
+            return
 
         # 1. 腹ぺこで食事がない：食事を売っている人のところへ。だめなら売り物を売りに行く。それもなければ働く
         has_meal = any(world.food_owner(name, f) for f in MEALS)
@@ -312,13 +341,11 @@ class RuleBrain:
         return None
 
     def treat_yourself(self, world, name, others):
-        """要るものを買う。夜の薪が足りなければ買い、懐に余裕があれば夕方の酒場で料理を頼む。"""
+        """要るものを買う。夜の薪が足りなければ買う。"""
         v = world.villagers[name]
         wants = []
         if world.will_buy(name, "薪"):  # 今夜の分がなければ必ず、余裕があれば何晩分か
             wants.append("薪")
-        if v["location"] == "酒場" and world.hour >= 16 and v["money"] >= 80 and random.random() < 0.5:
-            wants.append("料理")
         for item in wants:
             for seller in others:
                 if world.will_sell(seller, name, item) and v["money"] >= world.price(item):

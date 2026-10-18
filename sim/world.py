@@ -55,7 +55,8 @@ NEWS_DAYS = 2  # 聞いた村の様子を当てにする日数
 SAY_STATE = {"不足": "足りない", "余り": "余っている"}
 FAMILY_KEEP = {"食材": 2}  # 家に持ち帰ったとき、煮炊き用に蔵へ入れる食材の数（残りは売り物として持っておく）
 DEFAULT_DEMAND = 6
-SHOP_BUFFER = 4  # 酒場が蓄えておく、傷まない食材（燻製・干物・麦）それぞれの数  # 店がまだ売れ行きを知らないときの、1 日に売れる見込み
+SHOP_BUFFER = 4  # 酒場が蓄えておく、傷まない食材（燻製・干物・麦）それぞれの数
+SHOP_CASH = 150  # 酒場が蓄えを買い足すときに手元に残す額（料理 2 鍋分の材料費のめやす）  # 店がまだ売れ行きを知らないときの、1 日に売れる見込み
 KEEP = {"料理": 2, "サンドイッチ": 2, "ツナサンド": 2, "パン": 2, "燻製魚": 1, "燻製肉": 1, "干物": 1, "麦": 1, "魚": 1, "肉": 1, "薪": 10}  # 自分用に残す数。超えた分なら売る
 WEATHERS = [("晴れ", 5), ("曇り", 3), ("雨", 2), ("霧", 1), ("嵐", 0.5)]
 MAX_MEMORIES = 40
@@ -723,14 +724,19 @@ class World:
             reserve = 0 if item == "薪" else self.price("薪") * WOOD_LOT * 2
             if v["money"] - price < reserve:
                 return False
-            if v.get("to_order") and item != "薪" and item not in SPOIL:  # 傷まない食材は少し蓄えておく
-                return box.get(item, 0) + v["inventory"].get(item, 0) < SHOP_BUFFER
+            if v.get("to_order") and item != "薪" and item not in SPOIL:  # 傷まない食材は、余裕があれば少し蓄える
+                stock = box.get(item, 0) + v["inventory"].get(item, 0)
+                if stock >= 2 and v["money"] - price < SHOP_CASH:  # 料理 2 鍋分の材料費は手元に残す
+                    return False
+                return stock < SHOP_BUFFER
             for need, n in self.inputs(buyer).items():
                 members = self._members(need)
                 if item in members:
                     batches = -(-self.expected_demand(shop) // sum(self.recipes(buyer)[-1]["produce"].values()))
                     want = n * batches + (2 if v.get("to_order") and need != "薪" else 0)
                     have_now = sum(box.get(i, 0) + v["inventory"].get(i, 0) for i in members)
+                    if need != "薪" and have_now >= n and v["money"] - price < SHOP_CASH:
+                        return False  # 1 回分の材料があるなら、手元に余裕がないかぎり買い足さない
                     return have_now < max(want, n)
             return False
         if item == "薪":  # 夜の薪は一家で 10 本。今夜の分は必需品、余裕があれば何晩分か貯める
