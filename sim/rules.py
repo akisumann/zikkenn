@@ -18,14 +18,14 @@
   2. 疲労     … くたくたなら家に帰って休む
   3. 会話     … 話しかけられたら返事をする。話し好きは話しかけ、噂好きは噂を広める。
                 仕事の時間は話し込まず仕事場へ。同じ仕事場に人がいれば、働きながら話す
-  3.5 保存食 … 昼過ぎ、余った魚や肉が傷む前に、干物（川辺）や燻製（家）にする
+  3.5 燻製   … 昼過ぎ、余った魚や肉が傷む前に、家で燻製にする（酒場の主人は店の台所で）
   3.8 納品   … 店に注文された品を持っていれば、店へ届ける
   4. 行商     … 仕事のあと、余った品を買ってくれる人のところへ売りに行く
   5. 習慣     … その人ならではの癖（seed の habits）
   6. 日課     … 時間割どおりの場所へ行き、働く。材料が足りなければ仕入れに行く。
                 その日の仕事場は朝に一度だけ決める。本業の品が余っていて、どこかが足りないと
                 聞いていれば、そこ（畑・川・森）を手伝う。足りない所がなければ、余った魚や肉を
-                干物・燻製にする。それもできず余りすぎていれば休む。同じ所で続けて働くと、はかどる
+                燻製にする。それもできず余りすぎていれば休む。同じ所で続けて働くと、はかどる
 
 毎朝 6 時は広場で朝礼。全員の手持ちと困りごとから、村で何が足りない・余っているかがわかり、
 その場で受け渡しをする。それ以外の時間に知る村の様子は、自分で見たことと人から聞いたことだけ。
@@ -35,7 +35,7 @@ import random
 
 from .brains import QUICK_LIMIT, run_tool
 from .world import MAX_MOVES
-from .world import CATEGORIES, DAY_HOURS, HELP_JOBS, INGREDIENTS, MEALS, PRESERVE, RESERVE, SPOIL
+from .world import CATEGORIES, DAY_HOURS, HELP_JOBS, INGREDIENTS, MEALS, PRESERVE, RESERVE, SNACKS, SPOIL
 
 # 時間割の既定値。「家」「仕事場」「自由」か、場所の名前を書く。seed の routine で上書きできる
 DEFAULT_ROUTINE = {6: "広場", 8: "仕事場", 10: "仕事場", 12: "仕事場", 14: "仕事場",
@@ -206,6 +206,8 @@ class RuleBrain:
         if item:
             rule = PRESERVE[item]
             place = v["home"] if rule["place"] == "家" else rule["place"]
+            if world.at_order_shop(name):
+                place = here  # 酒場の主人は店の台所で
             if here == place:
                 act("preserve", item=item)
                 return
@@ -255,6 +257,8 @@ class RuleBrain:
     def eat_something(self, world, name):
         """食事をとる。傷みやすいものから先に、同じなら腹持ちのいいものから。"""
         food = [f for f in sorted(MEALS, key=lambda f: (-SPOIL.get(f, 0), -MEALS[f])) if world.food_owner(name, f)]
+        if not food and world.villagers[name]["hunger"] >= 5:  # 食事がなければ、燻製をかじってしのぐ
+            food = [f for f in SNACKS if world.food_owner(name, f)]
         if not food:
             return False
         run_tool(world, name, "eat", {"item": food[0]})
@@ -530,6 +534,10 @@ class RuleBrain:
             run_tool(world, name, "do", {"activity": random.choice(CHORES)})  # 品物を作らない人は家のことをする
         elif here == dest and plan == "仕事場" and here in HELP_JOBS and here != v["workplace"] and v["energy"] > 2:
             run_tool(world, name, "work", self.talk_while_working(world, name, others))  # 手伝い仕事
+        elif shop and world.at_order_shop(name) and self.preserve_plan(world, name):
+            run_tool(world, name, "preserve", {"item": self.preserve_plan(world, name)})  # 手が空いたら燻製を作る
+        elif shop and world.at_order_shop(name):
+            run_tool(world, name, "do", {"activity": "店番をしている（注文が来たら料理を出す）"})
         elif shop and not world.needs_more_goods(here):
             run_tool(world, name, "do", {"activity": "店番をしている（今日の分はもう作った）"})
         elif here == v["workplace"] and plan in ("仕事場", v["workplace"]) and v["energy"] > 2 and not lacking:

@@ -22,29 +22,32 @@ MAX_MOVES = 3        # 1 ティックに歩ける回数（それ以上は何も�
 #                       ├→ 加工（パン屋・酒場の台所）→ 食事（パン・料理）
 #   薪 ────────────────┤
 #                       └→ 夜の暖（一家に 1 本）
-MEALS = {"料理": 5, "サンドイッチ": 5, "パン": 3, "燻製肉": 4, "干物": 3}  # そのまま食べられる食事。食べると減る空腹度
-INGREDIENTS = {"麦": "麦粥", "魚": "焼き魚", "肉": "焼き肉"}  # 食材。生では食べず、家で薪を使って煮炊きする
+MEALS = {"料理": 5, "サンドイッチ": 5, "パン": 3}  # ちゃんとした食事。食べると減る空腹度
+SNACKS = {"燻製魚": 2, "燻製肉": 2}  # 燻製はそのままでも食べられるが、腹の足しは生より少しマシな程度
+# 食材。生では食べず、家で薪を使って煮炊きする（燻製も食材として使える）
+INGREDIENTS = {"麦": "麦粥", "魚": "焼き魚", "肉": "焼き肉", "燻製魚": "燻製魚の焼き物", "燻製肉": "燻製肉の煮込み"}
 # 毎晩、持っている分のうちこの割合が傷んで捨てられる。麦と薪、保存食は傷まない
-SPOIL = {"料理": 0.5, "サンドイッチ": 0.5, "魚": 0.4, "肉": 0.3, "パン": 0.2}
+SPOIL = {"料理": 0.5, "サンドイッチ": 0.5, "魚": 0.4, "肉": 0.3, "パン": 0.2, "燻製魚": 0.05, "燻製肉": 0.05}
 # 保存食づくり：手の空いた日に時間を使って、傷む食材を長持ちする食べ物にする
 PRESERVE = {
-    "魚": {"place": "川辺", "needs": {"魚": 2}, "makes": {"干物": 2}, "weather_ng": ("雨", "嵐", "霧"), "how": "魚を開いて干した"},
+    "魚": {"place": "家", "needs": {"魚": 2, "薪": 1}, "makes": {"燻製魚": 2}, "weather_ng": (), "how": "魚を燻した"},
     "肉": {"place": "家", "needs": {"肉": 2, "薪": 1}, "makes": {"燻製肉": 2}, "weather_ng": (), "how": "肉を燻した"},
 }
 HOME_MEAL = 4  # 家で煮炊きした食事で減る空腹度。薪 1 本で 1 人前なので、店より薪を食う
-FOOD = dict(MEALS)
+FOOD = {**MEALS, **SNACKS}
+RETAIL_MARKUP = 1.25  # 店が仕入れた食材を店先で売るときの上乗せ
 CATEGORIES = {"食材": list(INGREDIENTS)}  # 仕事の材料に「どれでもいい」を指定するための分類
-PRICES = {"料理": 25, "サンドイッチ": 34, "パン": 24, "燻製肉": 36, "干物": 32, "麦": 26, "魚": 30, "肉": 28, "薪": 12}  # 村の相場（銀貨）。売り手の収支を見て自動で詰めた値
+PRICES = {"料理": 25, "サンドイッチ": 34, "パン": 24, "燻製魚": 40, "燻製肉": 38, "麦": 26, "魚": 30, "肉": 28, "薪": 12}  # 村の相場（銀貨）。売り手の収支を見て自動で詰めた値
 HELP_JOBS = {"畑": {"麦": 1}, "川辺": {"魚": 1}, "森の入口": {"薪": 1}}  # 誰でもできる手伝い仕事（本業より実入りは少ない）
 # これだけ売れ残ったら「余っている」と感じる（村で 1〜2 日分の備蓄の目安）
-RESERVE = {"麦": 8, "魚": 4, "肉": 4, "薪": 8, "パン": 8, "サンドイッチ": 6, "料理": 6, "燻製肉": 10, "干物": 10}
+RESERVE = {"麦": 8, "魚": 4, "肉": 4, "薪": 8, "パン": 8, "サンドイッチ": 6, "料理": 6, "燻製魚": 10, "燻製肉": 10}
 WOOD_STORE = 5  # 薪は傷まないので、懐に余裕があれば一家で何晩分か貯めておく
 ASSEMBLY_PLACE = "広場"  # 毎朝 6 時、全員がここに集まって朝礼をする
 NEWS_DAYS = 2  # 聞いた村の様子を当てにする日数
 SAY_STATE = {"不足": "足りない", "余り": "余っている"}
 FAMILY_KEEP = {"食材": 2}  # 家に持ち帰ったとき、煮炊き用に蔵へ入れる食材の数（残りは売り物として持っておく）
 DEFAULT_DEMAND = 6  # 店がまだ売れ行きを知らないときの、1 日に売れる見込み
-KEEP = {"料理": 2, "サンドイッチ": 2, "パン": 2, "燻製肉": 2, "干物": 2, "麦": 1, "魚": 1, "肉": 1, "薪": 1}  # 自分用に残す数。超えた分なら売る
+KEEP = {"料理": 2, "サンドイッチ": 2, "パン": 2, "燻製魚": 1, "燻製肉": 1, "麦": 1, "魚": 1, "肉": 1, "薪": 1}  # 自分用に残す数。超えた分なら売る
 WEATHERS = [("晴れ", 5), ("曇り", 3), ("雨", 2), ("霧", 1), ("嵐", 0.5)]
 MAX_MEMORIES = 40
 MAX_INBOX = 30
@@ -131,7 +134,9 @@ class World:
 
     def begin_turn(self, name):
         """ターンの始め。2 時間の持ち時間を元に戻す。"""
-        self.villagers[name]["moves"] = 0
+        v = self.villagers[name]
+        v["moves"] = 0
+        v["visited"] = [v["location"]]
 
     def minutes_left(self, name):
         return TURN_MINUTES - MOVE_MINUTES * self.villagers[name].get("moves", 0)
@@ -163,14 +168,51 @@ class World:
         return None
 
     def has(self, name, item):
-        """name がいま手に取れる item の数（持ち物＋いる場所の在庫）。"""
+        """name がいま手に取れる item の数（持ち物＋いる場所の在庫。注文で作る店の主人なら出せる料理の数も）。"""
         box = self.store_at(name) or {}
-        return self.villagers[name]["inventory"].get(item, 0) + box.get(item, 0)
+        n = self.villagers[name]["inventory"].get(item, 0) + box.get(item, 0)
+        if item in self.outputs(name) and self.at_order_shop(name):
+            n += self.servable(name)
+        return n
+
+    # ---------- 注文を受けてから作る店（酒場） ----------
+
+    def at_order_shop(self, name):
+        v = self.villagers[name]
+        return v.get("to_order") and v["location"] == v["workplace"]
+
+    def servable(self, name):
+        """いま出せる料理の数。鍋に残っている分と、棚の材料で作れる分。"""
+        shop = self.villagers[name]["workplace"]
+        pot = self.data.setdefault("pots", {}).get(shop, 0)
+        box = self.data["stores"].get(shop, {})
+        recipe = self.recipes(name)[-1]
+        batches = min((sum(box.get(i, 0) for i in self._members(need)) // n) for need, n in recipe["needs"].items())
+        return pot + batches * sum(recipe["produce"].values())
+
+    def serve(self, name, n):
+        """注文を受けて料理を出す。鍋が空なら、棚の材料で一鍋作る（材料と薪を使う）。"""
+        shop = self.villagers[name]["workplace"]
+        pots = self.data.setdefault("pots", {})
+        recipe = self.recipes(name)[-1]
+        while pots.get(shop, 0) < n and not self._missing(name, recipe["needs"]):
+            for need, k in recipe["needs"].items():
+                for _ in range(k):
+                    item = max(self._members(need), key=lambda i: self.data["stores"][shop].get(i, 0))
+                    self.data["stores"][shop][item] -= 1
+            made = sum(recipe["produce"].values())
+            pots[shop] = pots.get(shop, 0) + made
+            self.log(f"🍲 **{name}** 注文を受けて一鍋作った（料理×{made}）")
+        served = min(n, pots.get(shop, 0))
+        pots[shop] = pots.get(shop, 0) - served
+        return served
 
     def take(self, name, item, n=1):
         """item を n 個取り出す。家や店の在庫から先に使い、足りなければ持ち物から。"""
         if self.has(name, item) < n:
             return False
+        if item in self.outputs(name) and self.at_order_shop(name):
+            return self.serve(name, n) == n
         box = self.store_at(name) or {}
         for _ in range(n):
             if box.get(item, 0) > 0:
@@ -233,6 +275,15 @@ class World:
         （品切れの日の売れた数は本当の需要より少ないので、売れた数だけで決めると先細りする）"""
         for shop in [p for p in self.data["stores"] if self.shop_owner(p)]:
             demand = self.expected_demand(shop)
+            if self.villagers[self.shop_owner(shop)].get("to_order"):  # 注文で作る店：出た数と断った数から
+                asked = self.sold_today(shop) + self.data.setdefault("missed", {}).get(shop, 0)
+                self.data["demand"][shop] = max(3, round((demand + asked) / 2 + 0.49))
+                self.data["missed"][shop] = 0
+                left = self.data.setdefault("pots", {}).get(shop, 0)
+                if left:
+                    self.log(f"🍲 {shop}の鍋に残った料理×{left}を片づけた")
+                self.data["pots"][shop] = 0
+                continue
             left = self.shelf_goods(shop)
             if left == 0:
                 demand = min(30, demand + 2)
@@ -249,7 +300,9 @@ class World:
         return self.data["sales"].get(shop, {}).get(str(self.data["day"]), 0)
 
     def needs_more_goods(self, shop):
-        """店の棚の品と今日もう売れた数が、見込みに届いていなければ作る。"""
+        """店の棚の品と今日もう売れた数が、見込みに届いていなければ作る。注文で作る店は作り置きしない。"""
+        if self.villagers[self.shop_owner(shop)].get("to_order"):
+            return False
         return self.shelf_goods(shop) + self.sold_today(shop) < self.expected_demand(shop)
 
     def price(self, item):
@@ -335,8 +388,11 @@ class World:
             return "もうそこにいる。"
         if not self.can_move(name):
             return "この 2 時間はもう歩き回る時間がない。"
+        if v.get("moves", 0) >= 2 and destination in v.get("visited", []):
+            return f"{destination}にはさっき行ったばかりだ。行ったり来たりしていても仕方がない。"
         src = v["location"]
         v["moves"] = v.get("moves", 0) + 1
+        v.setdefault("visited", []).append(destination)
         self.broadcast(src, f"{name}が{destination}へ向かった。", exclude=name)
         v["location"] = destination
         v["activity"] = "やって来たところ"
@@ -459,14 +515,14 @@ class World:
                 + sum(box.get(item, 0) for box in self.data["stores"].values()))
 
     def act_preserve(self, name, item):
-        """手の空いた時間に、魚を干物に、肉を燻製にする（2 時間かかる）。"""
+        """手の空いた時間に、魚や肉を燻製にする（2 時間かかる）。生より傷みにくく、少し高く売れる。"""
         v = self.villagers[name]
         if item not in PRESERVE:
-            return "保存食にできるのは魚（干物）と肉（燻製）だけ。"
+            return "燻製にできるのは魚と肉だけ。"
         rule = PRESERVE[item]
         place = v["home"] if rule["place"] == "家" else rule["place"]
-        if v["location"] != place:
-            return f"{item}の保存食づくりは{rule['place']}でしかできない。"
+        if v["location"] != place and not (rule["place"] == "家" and self.at_order_shop(name)):
+            return f"{item}の燻製づくりは家（酒場なら店の台所）でしかできない。"
         if self.data["weather"] in rule["weather_ng"]:
             return f"{self.data['weather']}の日は干せない。"
         for need, n in rule["needs"].items():
@@ -482,7 +538,7 @@ class World:
         v["activity"] = f"{rule['how'].rstrip('た')}ている"
         self.broadcast(v["location"], f"{name}が{rule['how'].rstrip('た')}ている。", exclude=name)
         self.log(f"🐟 **{name}** {rule['how']}（{'、'.join(made)}）")
-        return f"{rule['how']}。{'、'.join(made)}ができた。傷まずに長持ちする。"
+        return f"{rule['how']}。{'、'.join(made)}ができた。傷みにくく、少し高く売れる。"
 
     def spoil(self):
         """夜、傷みやすい食べ物の一部が傷んで捨てられる（持ち物も、家の蔵も、店の棚も）。"""
@@ -520,7 +576,7 @@ class World:
 
     def act_eat(self, name, item):
         v = self.villagers[name]
-        if item in INGREDIENTS:
+        if item in INGREDIENTS and item not in FOOD:
             return f"{item}は生では食べられない。家で cook（煮炊き）すれば食べられる。"
         if item not in FOOD:
             return f"{item}は食べられない。食べられるもの: " + "、".join(FOOD)
@@ -596,9 +652,14 @@ class World:
     def surplus(self, name, item):
         """name が売ってもいい item の数。仕事の材料は売らない。
         自分の作った品は持っている分すべて（店の主人が店にいれば棚の分も）。それ以外は自分の分を残して。"""
+        v = self.villagers[name]
         if self.uses(name, item):
+            if self.at_order_shop(name):  # 酒場は、料理に使う分（各 2 つ）を残して食材を店先で売る
+                return max(0, self.data["stores"][v["workplace"]].get(item, 0) - 2)
             return 0
         carried = self.villagers[name]["inventory"].get(item, 0)
+        if item in self.outputs(name) and self.at_order_shop(name):
+            return self.servable(name)
         if item in self.outputs(name):
             box = self.store_at(name)
             shelf = box.get(item, 0) if box is not None and self.shop_owner(self.villagers[name]["location"]) == name else 0
@@ -626,11 +687,20 @@ class World:
         仕事の材料は 4 つまで仕入れる。薪は夜の分を 2 本まで。食事は空腹なら 2 つまで。"""
         v = self.villagers[buyer]
         have, price = self.has(buyer, item), self.price(item) or 99
-        if self.uses(buyer, item):  # 店の材料：注文した分か、手元が 4 つ未満なら
+        if self.uses(buyer, item):  # 店の材料：見込みの分まで。薪代は残しておく
             shop = v["workplace"]
-            ordered = self.data["orders"].get(shop, {}).get(item, 0)
-            stocked = self.data["stores"].get(shop, {}).get(item, 0) + v["inventory"].get(item, 0)
-            return v["money"] >= price and (ordered > 0 or stocked < 4)
+            box = self.data["stores"].get(shop, {})
+            reserve = 0 if item == "薪" else self.price("薪") * 2
+            if v["money"] - price < reserve:
+                return False
+            for need, n in self.inputs(buyer).items():
+                members = self._members(need)
+                if item in members:
+                    batches = -(-self.expected_demand(shop) // sum(self.recipes(buyer)[-1]["produce"].values()))
+                    want = n * batches + (2 if v.get("to_order") and need != "薪" else 0)
+                    have_now = sum(box.get(i, 0) + v["inventory"].get(i, 0) for i in members)
+                    return have_now < max(want, n)
+            return False
         if item == "薪":  # 夜の薪は一家で 1 本。今夜の分は必需品、余裕があれば何晩分か貯める
             stock = self.household_stock(buyer, "薪")
             if stock == 0:
@@ -638,6 +708,9 @@ class World:
             return stock < WOOD_STORE and v["money"] - price >= 40
         if item in MEALS:
             return v["money"] >= price and have < 2 and v["hunger"] >= 3
+        if item in INGREDIENTS:  # 家で煮炊きする食材：家に食材がなく、薪があって懐に余裕があれば
+            home_food = sum(self.home_stock(buyer, i) for i in INGREDIENTS)
+            return home_food < 2 and self.household_stock(buyer, "薪") >= 2 and v["money"] - price >= 40
         return False
 
     def act_sell(self, name, buyer, item):
@@ -671,7 +744,10 @@ class World:
         if not self.price(item):
             return f"{item}は売り買いできない。相場: " + self.price_list()
         amount = max(1, amount)
-        price = self.price(item) * amount
+        unit = self.price(item)
+        if self.uses(seller, item) and self.at_order_shop(seller):
+            unit = round(unit * RETAIL_MARKUP)  # 店先で売る食材は少し上乗せ
+        price = unit * amount
         if v["money"] < price:
             return f"銀貨が足りない（{price} 枚必要、手持ち {v['money']} 枚）。"
         if not self.will_sell(seller, name, item) or self.surplus(seller, item) < amount:
@@ -681,6 +757,9 @@ class World:
             self.log(f"🙅 **{seller}** は **{name}** に{item}を売らなかった")
             if self.surplus(seller, item) <= 0:
                 self.note(name, item, "不足")
+                if self.at_order_shop(seller) and item in self.outputs(seller):  # 材料がなくて注文を断った
+                    shop = self.villagers[seller]["workplace"]
+                    self.data.setdefault("missed", {})[shop] = self.data["missed"].get(shop, 0) + amount
             return f"{seller}に断られた。"
         v["money"] -= price
         self.villagers[seller]["money"] += price
@@ -694,11 +773,14 @@ class World:
     def _hand_over(self, seller, buyer, item, n):
         """売り手から買い手へ品を渡す。店の主人が売るなら棚から、買い手が店や家にいればそこへ入る。"""
         sv = self.villagers[seller]
-        for _ in range(n):
-            if sv["inventory"].get(item, 0) > 0:
-                sv["inventory"][item] -= 1
-            else:
-                self.store_at(seller)[item] -= 1
+        if item in self.outputs(seller) and self.at_order_shop(seller):
+            self.serve(seller, n)
+        else:
+            for _ in range(n):
+                if sv["inventory"].get(item, 0) > 0:
+                    sv["inventory"][item] -= 1
+                else:
+                    self.store_at(seller)[item] -= 1
         self.put(buyer, item, n)
         shop = sv["location"]
         if self.shop_owner(shop) == seller and item in self.outputs(seller):
