@@ -19,6 +19,7 @@
   3. 会話     … 話しかけられたら返事をする。話し好きは話しかけ、噂好きは噂を広める。
                 仕事の時間は話し込まず仕事場へ。同じ仕事場に人がいれば、働きながら話す
   3.5 保存食 … 昼過ぎ、余った魚や肉が傷む前に、干物（川辺）や燻製（家）にする
+  3.8 納品   … 店に注文された品を持っていれば、店へ届ける
   4. 行商     … 仕事のあと、余った品を買ってくれる人のところへ売りに行く
   5. 習慣     … その人ならではの癖（seed の habits）
   6. 日課     … 時間割どおりの場所へ行き、働く。材料が足りなければ仕入れに行く。
@@ -143,7 +144,8 @@ class RuleBrain:
         v = world.villagers[name]
         for need, n in world.inputs(name).items():
             items = CATEGORIES.get(need, [need])
-            if sum(v["inventory"].get(i, 0) for i in items) >= n * 2:
+            if sum(world.has(name, i) for i in items) >= n * 2 and not any(
+                    world.data.get("orders", {}).get(v["workplace"], {}).get(i, 0) for i in items):
                 continue
             for seller in others:
                 for item in items:
@@ -205,6 +207,12 @@ class RuleBrain:
             if world.travel_turns(here, place) == 1:
                 act("move", destination=place)
                 return
+
+        # 3.8 店に注文された品を持っていれば、届けに行く
+        shop = self.delivery_target(world, name)
+        if shop and shop != here:
+            act("move", destination=shop)
+            return
 
         # 4. 仕事のあと、余った品を売りに行く
         if world.hour >= 14 and self.market_trip(world, name):
@@ -307,6 +315,18 @@ class RuleBrain:
                     run_tool(world, name, "buy", {"seller": seller, "item": item, "amount": 1})
                     return True
         return False
+
+    def delivery_target(self, world, name):
+        """持っている品を注文している店（仕事を一区切りした 10 時以降）。"""
+        if world.hour < 10:
+            return None
+        v = world.villagers[name]
+        for shop, order in world.data.get("orders", {}).items():
+            if world.shop_owner(shop) == name:
+                continue
+            if any(q > 0 and world.surplus(name, i) > 0 for i, q in order.items()):
+                return shop
+        return None
 
     def market_trip(self, world, name, minimum=2):
         """余った品（食材・薪）を抱えて、買ってくれる人のところへ売りに行く。"""
@@ -433,6 +453,9 @@ class RuleBrain:
         if v.get("today_job", [None])[0] == world.data["day"]:
             return v["today_job"][1]
         job = v["workplace"]
+        if world.inputs(name):  # 店の主人は店にいる（作るかどうかは売れ行き次第）
+            v["today_job"] = [world.data["day"], job]
+            return job
         over = [i for i in world.outputs(name) if world.surplus(name, i) >= RESERVE.get(i, 99)]
         if over:
             news = world.recent_news(name)
@@ -461,8 +484,7 @@ class RuleBrain:
         for item, rule in PRESERVE.items():
             if world.data["weather"] in rule["weather_ng"]:
                 continue
-            enough = all((world.household_stock(name, n) if n == "薪" else v["inventory"].get(n, 0)) >= k
-                         for n, k in rule["needs"].items())
+            enough = all(world.has(name, n) >= k for n, k in rule["needs"].items())
             if enough and world.surplus(name, item) >= 2:
                 return item
         return None
@@ -490,18 +512,7 @@ class RuleBrain:
             dest = plan
 
         lacking = world.lacking(name)
-        if plan in ("仕事場", v["workplace"]) and lacking:  # 仕事の材料を仕入れに行く
-            items = CATEGORIES.get(lacking[0], [lacking[0]])
-            for seller in others:
-                for item in items:
-                    if world.will_sell(seller, name, item) and v["money"] >= world.price(item):
-                        amount = max(1, min(3, world.surplus(seller, item), v["money"] // world.price(item)))
-                        run_tool(world, name, "buy", {"seller": seller, "item": item, "amount": amount})
-                        return
-            for other, ov in world.villagers.items():
-                if other != name and ov["location"] != here and any(world.will_sell(other, name, i) for i in items):
-                    run_tool(world, name, "move", {"destination": ov["location"]})
-                    return
+        shop = world.inputs(name) and here == v["workplace"]
 
         if dest != here:
             run_tool(world, name, "move", {"destination": dest})
@@ -515,9 +526,11 @@ class RuleBrain:
             run_tool(world, name, "do", {"activity": random.choice(CHORES)})  # 品物を作らない人は家のことをする
         elif here == dest and plan == "仕事場" and here in HELP_JOBS and here != v["workplace"] and v["energy"] > 2:
             run_tool(world, name, "work", self.talk_while_working(world, name, others))  # 手伝い仕事
+        elif shop and not world.needs_more_goods(here):
+            run_tool(world, name, "do", {"activity": "店番をしている（今日の分はもう作った）"})
         elif here == v["workplace"] and plan in ("仕事場", v["workplace"]) and v["energy"] > 2 and not lacking:
             run_tool(world, name, "work", self.talk_while_working(world, name, others))
-        elif here == v["workplace"] and lacking:
+        elif shop and lacking:
             run_tool(world, name, "do", {"activity": f"{lacking[0]}が届くのを待っている"})
         elif others and random.random() < v.get("talk", 0.5):
             self.chat(world, name, others)
