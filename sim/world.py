@@ -780,6 +780,9 @@ class World:
         仕事の材料は 4 つまで仕入れる。薪は夜の分を 2 本まで。食事は空腹なら 2 つまで。"""
         v = self.villagers[buyer]
         have, price = self.has(buyer, item), self.price(item) or 99
+        if item == "薪" and self.uses(buyer, item) and v["location"] != v["workplace"]:
+            # 店の主人が店の外で買う薪は、家の暖房用（今夜の分がなければ）
+            return self.household_stock(buyer, "薪") < NIGHT_WOOD and self.money(buyer) >= price
         if self.uses(buyer, item):  # 店の材料：見込みの分まで。薪代は残しておく
             shop = v["workplace"]
             box = self.data["stores"].get(shop, {})
@@ -997,7 +1000,8 @@ class World:
         if shop is None or self.shop_owner(v["workplace"]) != name:
             return
         lacking = NIGHT_WOOD - self.household_stock(name, "薪")
-        n = min(max(0, lacking), shop.get("薪", 0))
+        spare = shop.get("薪", 0) - COOK_WOOD  # 明日の料理の 1 回分は店に残す
+        n = min(max(0, lacking), max(0, spare))
         if n > 0:
             shop["薪"] -= n
             self._add(self.data["stores"].setdefault(v["home"], {}), "薪", n)
