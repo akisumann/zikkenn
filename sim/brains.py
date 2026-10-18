@@ -43,6 +43,8 @@ ACTION_TOOLS = [
         "item": {**S, "description": "麦・魚・肉のどれか"}}),
     _tool("preserve", "時間を使って保存食を作る。干物：川辺で魚 2 匹から 2 つ（雨・嵐・霧の日は不可）。燻製肉：家（酒場の主人は店の台所）で肉 2 つと薪 10 本から 2 つ。どれも傷まず、生より少し高く売れる。", {
         "item": {**S, "description": "作るもの：干物・燻製肉"}}),
+    _tool("mend", "家で、家族（自分を含む）のほつれた服を繕う。3 回で 1 着直る。同じ服は 2 回まで。", {
+        "target": {**S, "description": "服を繕う相手（家族）の名前"}}),
     _tool("rest", "その場で休んで元気を回復する。", {}),
     _tool("do", "上のどれにも当てはまらないことをする（散歩、歌う、考え込む、掃除する、など）。", {
         "activity": {**S, "description": "何をしているかの描写（例：「井戸のそばで空を見上げている」）"},
@@ -103,6 +105,8 @@ def run_tool(world, name, tool, args):
         return world.act_cook(name, args["item"])
     if tool == "preserve":
         return world.act_preserve(name, args["item"])
+    if tool == "mend":
+        return world.act_mend(name, args["target"])
     if tool == "rest":
         return world.act_rest(name)
     if tool == "do":
@@ -160,7 +164,7 @@ def system_prompt(world, name):
 
 ## この世界での過ごし方
 これはシミュレーションです。2 時間ごとに、あなたは「いまの状況」を受け取り、次の 2 時間に何をするかをツールで決めます。
-- 行動ツール（say / work / cook / preserve / rest / do）は 1 回につき 1 つだけ使えます。使った時点でこの 2 時間は終わります。
+- 行動ツール（say / work / cook / preserve / mend / rest / do）は 1 回につき 1 つだけ使えます。使った時点でこの 2 時間は終わります。
 - 小さな用事（eat / give / buy / sell）は 2 時間を使わず、行動の前に {QUICK_LIMIT} つまでできます。
 - 移動（move）は村の中ならどこへでも 20 分で、2 時間のうち 3 回まで。歩いた分だけ、働ける時間（実入り）が減ります。
 - remember と update_impression は心の中の動きなので、行動の前に何度でも使えます。大事な出来事や秘密、約束は remember に残してください。あなたが明日以降に思い出せるのは、記憶メモだけです。
@@ -173,6 +177,8 @@ def system_prompt(world, name):
 - 薪は傷まないので、家に何晩分か貯めておけます。
 - 同じ仕事場で続けて働くと、段取りがよくなって実入りが増えます。
 - 村で何が足りない・余っているかは、自分で見たことと人から聞いたことでしかわかりません（状況欄の「知っている村の様子」）。話をすると、あなたの知っている様子も相手に伝わります。
+- 暮らしには不測の事態があります。仕事中に怪我をする（治るまで実入りが半分。薬草で早く治る）、道具が壊れる（買い替えるまで本業ができない）、服がほつれる（夜の冷えがこたえる。家で繕えるが手間がかかり、繕いきれなければ買い替える）。外の仕事ほど起きやすいので、いざというときのお金は残しておきましょう。
+- 雑貨屋の商人は、町の品（薬草・服・道具）を売っています。かなり余った干物・燻製肉・麦・薪は、相場の半額で商人に買い取ってもらえます。商人は 3 日に 1 回、町へ出かけて店を閉めます。
 - 夜 22 時になると、全員が自動で家に帰って眠ります。一家で薪を 10 本燃やせば暖かくよく眠れますが、なければ冷えてあまり疲れが取れません。
 
 ## 心がけ
@@ -192,6 +198,8 @@ class ClaudeBrain:
         self.client = anthropic.Anthropic()
 
     def take_turn(self, world, name):
+        if world.is_away(name):  # 町へ出かけている
+            return
         world.begin_turn(name)
         messages = [{"role": "user", "content": world.perceive(name)}]
         system = system_prompt(world, name)

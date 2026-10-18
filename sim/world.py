@@ -43,7 +43,22 @@ FOOD = {**MEALS, **SNACKS}
 RETAIL_MARKUP = 1.25  # 店が仕入れた食材を店先で売るときの上乗せ
 # 仕事の材料に「どれでもいい」を指定するための分類
 CATEGORIES = {"食材": list(INGREDIENTS), "魚類": ["魚", "干物"], "肉類": ["肉", "燻製肉"]}
-PRICES = {"料理": 32, "サンドイッチ": 34, "ツナサンド": 34, "パン": 24, "燻製肉": 38, "干物": 36, "麦": 26, "魚": 30, "肉": 28, "薪": 1}  # 村の相場（銀貨）。売り手の収支を見て自動で詰めた値
+PRICES = {"料理": 32, "サンドイッチ": 34, "ツナサンド": 34, "パン": 24, "燻製肉": 38, "干物": 36, "麦": 26, "魚": 30, "肉": 28, "薪": 1,
+          "薬草": 20, "服": 60, "道具": 80}  # 村の相場（銀貨）。薬草・服・道具は町の品で、雑貨商人だけが売る
+# 暮らしの不測の事態。外の仕事（畑・川辺・森）ほど起きやすい
+OUTDOOR = ("畑", "川辺", "森の入口")
+INJURY = {"外": 0.03, "猟": 0.05, "内": 0.01}   # 仕事 1 回ごとに怪我をする確率（猟は獣を相手にする猟師）
+INJURY_DAYS = 4                                  # 薬草がなければ、怪我が自然に治るまでの日数。怪我の間は実入りが半分
+TOOL_BREAK = {"外": 0.02, "内": 0.01}            # 本業の仕事 1 回ごとに道具が壊れる確率。壊れたら買い替えるまで本業ができない
+FRAY = {"外": 0.05, "内": 0.02}                  # 毎晩、服がほつれる確率（外で働いた日は高い）。ほつれた服では夜の冷えがこたえる
+MEND_STEPS = 3                                   # 家で服を繕うのにかかる行動の回数（6 時間）。同じ服は MEND_LIMIT 回まで
+MEND_LIMIT = 2
+# 雑貨商人：町の品を村で売り、村でかなり余った傷まない品を安く買い取って町へ持っていく
+MERCHANT_GOODS = {"薬草": 6, "服": 4, "道具": 4}  # 町から仕入れて店に置いておく数
+EXPORTS = ("干物", "燻製肉", "麦", "薪")          # 商人が買い取るもの（町まで傷まずに運べるもの）
+EXPORT_RATE = 0.5                                 # 買い取り値は相場の半額（捨てるよりはまし、という値）
+TOWN_EVERY = 3                                    # 商人は 3 日に 1 回、丸一日町へ行く（店は閉まる）
+SAVINGS = 100  # 不測の事態（道具の買い替え＋薬草）に備えて、各家が手を付けずに取っておく額
 HELP_JOBS = {"畑": {"麦": 1}, "川辺": {"魚": 1}, "森の入口": {"薪": 10}}  # 誰でもできる手伝い仕事（本業より実入りは少ない）
 # これだけ売れ残ったら「余っている」と感じる（村で 1〜2 日分の備蓄の目安）
 RESERVE = {"麦": 8, "魚": 4, "肉": 4, "薪": 80, "パン": 8, "サンドイッチ": 6, "ツナサンド": 6, "料理": 6, "燻製肉": 10, "干物": 10}
@@ -119,6 +134,8 @@ class World:
                 world._add(data["stores"][v["workplace"] if to_shop else v["home"]], item, n)
                 v["inventory"][item] = 0
         for name, v in villagers.items():  # 店の財布は、店の主人たちが手持ちの半分ずつを出し合って作る
+            if v.get("merchant"):  # 雑貨商人は町の売り買いでお金を回すので、手持ちは数えない
+                data["stores"].setdefault(v["workplace"], {}).update(MERCHANT_GOODS)
             if world.shop_of(name):
                 share = v["money"] // 2
                 v["money"] -= share
@@ -242,7 +259,7 @@ class World:
         here = v["location"]
         if here == v["home"]:
             return self.data["stores"].setdefault(here, {})
-        if here == v["workplace"] and name in self.shop_owners(here):
+        if here == v["workplace"] and (name in self.shop_owners(here) or v.get("merchant")):
             return self.data["stores"].setdefault(here, {})
         return None
 
@@ -270,6 +287,8 @@ class World:
         """いま出せる料理の数。鍋に残っている分と、棚の材料で作れる分。"""
         shop = self.villagers[name]["workplace"]
         pot = self._pot(shop)["old"] + self._pot(shop)["new"]
+        if self.villagers[name].get("broken_tool"):  # 鍋や包丁が壊れていれば、鍋の残りしか出せない
+            return pot
         box = self.data["stores"].get(shop, {})
         recipe = self.recipes(name)[-1]
         batches = min((sum(box.get(i, 0) for i in self._members(need)) // n) for need, n in recipe["needs"].items())
@@ -281,7 +300,7 @@ class World:
         pot = self._pot(shop)
         recipe = self.recipes(name)[-1]
         box = self.data["stores"][shop]
-        while pot["old"] + pot["new"] < n and all(
+        while pot["old"] + pot["new"] < n and not self.villagers[name].get("broken_tool") and all(
                 sum(box.get(i, 0) for i in self._members(need)) >= k for need, k in recipe["needs"].items()):
             for need, k in recipe["needs"].items():
                 for _ in range(k):
@@ -290,6 +309,7 @@ class World:
             made = sum(recipe["produce"].values())
             pot["new"] += made
             self.log(f"🍲 **{name}** 注文を受けて一鍋作った（料理×{made}）")
+            self._mishap(name, tools=True)
         served = 0
         for key in ("old", "new"):  # 昨日の分から先に出す
             k = min(n - served, pot[key])
@@ -384,13 +404,25 @@ class World:
         box = self.data["stores"].get(self.villagers[name]["home"], {})
         return sum(box.get(m, 0) for m in MEALS)
 
+    def is_merchant(self, name):
+        return bool(self.villagers[name].get("merchant"))
+
+    def is_away(self, name):
+        """雑貨商人が町へ出かけている日か。"""
+        return self.is_merchant(name) and self.villagers[name]["location"] not in self.data["places"]
+
     def money(self, name):
-        """name が使えるお金。同じ家に住む家族の財布の合計（家計）。"""
+        """name が使えるお金。同じ家に住む家族の財布の合計（家計）。
+        雑貨商人は町の売り買いでも稼ぐので、村での買い物にお金が尽きることはない（手持ちは数えない）。"""
+        if self.is_merchant(name):
+            return 10 ** 9
         home = self.villagers[name]["home"]
         return sum(v["money"] for v in self.villagers.values() if v["home"] == home)
 
     def pay(self, name, amount):
         """家計から払う。払う本人の財布から先に使い、足りなければ家族の財布から。"""
+        if self.is_merchant(name):
+            return
         home = self.villagers[name]["home"]
         payers = [name] + [n for n, v in self.villagers.items() if v["home"] == home and n != name]
         for n in payers:
@@ -503,10 +535,18 @@ class World:
         bag = "、".join(f"{k}×{n}" for k, n in v.get("basket", {}).items() if n > 0)
         if bag:
             inv += f"（買い物袋：{bag}）"
-        lines.append(f"【持ち物】{inv}、銀貨 {v['money']} 枚（家族と分け合う家計は {self.money(name)} 枚）")
+        if self.is_merchant(name):
+            lines.append(f"【持ち物】{inv}（お金は町の商いでも回しているので、村での買い物に困ることはない）")
+        else:
+            lines.append(f"【持ち物】{inv}、銀貨 {v['money']} 枚（家族と分け合う家計は {self.money(name)} 枚）")
+        trouble = self.troubles(name)
+        if trouble:
+            lines.append("【困りごと】" + "、".join(trouble))
         box = self.store_at(name)
         if box is not None:
             label = "家の蔵" if here == v["home"] else "店の棚"
+            if self.is_merchant(name) and label == "店の棚":
+                label = "雑貨屋の棚"
             lines.append(f"【{label}】" + ("、".join(f"{k}×{n}" for k, n in box.items() if n > 0) or "空っぽ"))
             if label == "店の棚":
                 lines.append(f"【店の財布】銀貨 {self.purse(here)} 枚（仕入れはここから。店じまいに {SHOP_KEEP} 枚を残して儲けを仲間と折半）")
@@ -575,6 +615,9 @@ class World:
             if v["location"] not in HELP_JOBS:
                 return f"仕事は{v['workplace']}でしかできない（手伝いなら{'・'.join(HELP_JOBS)}でできる）。"
             return self._help(name)
+        if v.get("broken_tool"):
+            self.note(name, "道具", "不足")
+            return "道具が壊れていて、本業ができない（雑貨屋で道具を買えば直る。手伝い仕事はできる）。"
         recipe = self._pick_recipe(name)
         if recipe is None:
             lacking = self.lacking(name)
@@ -592,6 +635,8 @@ class World:
             if self.data["weather"] in ("雨", "嵐") and v["workplace"] in ("畑", "川辺", "森の入口"):
                 n = max(1, n // 2)
             n = self._scale(name, n + bonus)
+            if self.injured(name):
+                n = n // 2 + (random.random() < 0.5 if n % 2 else 0)  # 怪我の間は実入りが半分
             if n <= 0:
                 continue
             self.put(name, item, n)
@@ -600,11 +645,104 @@ class World:
                 self.note(name, item, "余り")
         if not gained:
             return "歩き回って時間がなく、仕事にならなかった。"
+        mishap = self._mishap(name, tools=True)
         v["energy"] = max(0, v["energy"] - 1)
         v["activity"] = f"{v['job']}の仕事をしている"
         self.broadcast(v["location"], f"{name}が仕事をしている。", exclude=name)
         self.log(f"🔨 **{name}** 働いた（{'、'.join(gained)}）" + ("　続けて働いてはかどった" if bonus else ""))
-        return f"働いて {'、'.join(gained)} を得た。" + ("続けて働いたのではかどった。" if bonus else "")
+        return f"働いて {'、'.join(gained)} を得た。" + ("続けて働いたのではかどった。" if bonus else "") + mishap
+
+    # ---------- 不測の事態（怪我・道具の故障・服のほつれ） ----------
+
+    def _outdoor(self, name):
+        return self.villagers[name]["location"] in OUTDOOR
+
+    def injured(self, name):
+        return self.villagers[name].get("injured", 0) > 0
+
+    def _mishap(self, name, tools):
+        """仕事のあとに、怪我をしたり道具が壊れたりすることがある（外の仕事ほど起きやすい）。"""
+        v = self.villagers[name]
+        out = self._outdoor(name)
+        if out:
+            v["outdoor_day"] = self.data["day"]
+        said = ""
+        risk = INJURY["猟" if "肉" in v.get("produce", {}) and out else "外" if out else "内"]
+        if not self.injured(name) and random.random() < risk:
+            v["injured"] = INJURY_DAYS
+            self.log(f"🤕 **{name}** は仕事中に怪我をした")
+            said += " 仕事中に怪我をしてしまった（治るまで実入りが半分。薬草を使えば早く治る）。"
+        if tools and not v.get("broken_tool") and random.random() < TOOL_BREAK["外" if out else "内"]:
+            v["broken_tool"] = True
+            self.log(f"🔧 **{name}** の道具が壊れた")
+            said += " 道具が壊れてしまった（買い替えるまで本業ができない）。"
+        return said
+
+    def troubles(self, name):
+        v = self.villagers[name]
+        out = []
+        if self.injured(name):
+            out.append(f"怪我をしている（あと{v['injured']}日。薬草を使えば早く治る）")
+        if v.get("broken_tool"):
+            out.append("道具が壊れている（本業ができない）")
+        if v.get("frayed"):
+            out.append(f"服がほつれている（繕えるのはあと{MEND_LIMIT - v.get('mends', 0)}回）")
+        return out
+
+    def needs_item(self, name, item):
+        """name が困りごとのために item を要るか（薬草：怪我、道具：故障、服：繕えないほつれ）。"""
+        v = self.villagers[name]
+        if item == "薬草":
+            return self.injured(name) and self.household_stock(name, "薬草") == 0
+        if item == "道具":
+            return bool(v.get("broken_tool"))
+        if item == "服":
+            return bool(v.get("frayed")) and (v.get("mends", 0) >= MEND_LIMIT or not self.mender(name))
+        return False
+
+    def mender(self, name):
+        """name の家で服を繕える、手の空いた人（品物を作る仕事のない人）。"""
+        return next((n for n in self.family_of(name) if not self.recipes(n) and not self.is_merchant(n)), None)
+
+    def _use(self, name, item):
+        """買ったり持っていたりする薬草・道具・服を、困りごとに使う。"""
+        v = self.villagers[name]
+        if item == "道具" and v.get("broken_tool"):
+            v["broken_tool"] = False
+            self.log(f"🔧 **{name}** は新しい道具を使い始めた")
+        elif item == "服" and v.get("frayed"):
+            v["frayed"], v["mends"], v["mend_work"] = False, 0, 0
+            self.log(f"👕 **{name}** は新しい服に着替えた")
+        elif item == "薬草" and self.injured(name):
+            v["injured"] = 0
+            self.log(f"🌿 **{name}** は薬草で怪我の手当てをした")
+        else:
+            return False
+        return True
+
+    def act_mend(self, name, target):
+        """家で、家族のほつれた服を繕う（MEND_STEPS 回の行動で 1 着。同じ服は MEND_LIMIT 回まで）。"""
+        v = self.villagers[name]
+        if v["location"] != v["home"]:
+            return "繕い物は家でしかできない。"
+        if target not in self.villagers or not self.family(name, target):
+            return "繕えるのは家族の服だけ。"
+        t = self.villagers[target]
+        if not t.get("frayed"):
+            return f"{target}の服はほつれていない。"
+        if t.get("mends", 0) >= MEND_LIMIT:
+            return f"{target}の服はもう繕いきれない。新しい服を買うしかない。"
+        t["mend_work"] = t.get("mend_work", 0) + 1
+        who = "自分" if target == name else target
+        v["activity"] = f"{who}の服を繕っている"
+        self.broadcast(v["location"], f"{name}が{who}の服を繕っている。", exclude=name)
+        if t["mend_work"] < MEND_STEPS:
+            self.log(f"🧵 **{name}** {who}の服を繕っている（{t['mend_work']}/{MEND_STEPS}）")
+            return f"{who}の服を繕っている（{t['mend_work']}/{MEND_STEPS}）。"
+        t["frayed"], t["mend_work"] = False, 0
+        t["mends"] = t.get("mends", 0) + 1
+        self.log(f"🧵 **{name}** {who}の服を繕い終えた")
+        return f"{who}の服を繕い終えた。"
 
     def _scale(self, name, n):
         """歩いた分だけ働く時間が減る。残り時間に応じて実入りを減らす（端数は確率で丸める）。"""
@@ -639,6 +777,8 @@ class World:
         gained = []
         for item, n in HELP_JOBS[place].items():
             n = self._scale(name, n + bonus)
+            if self.injured(name):
+                n //= 2
             if n <= 0:
                 continue
             v["inventory"][item] = v["inventory"].get(item, 0) + n
@@ -649,7 +789,7 @@ class World:
         v["activity"] = f"{place}で手伝い仕事をしている"
         self.broadcast(place, f"{name}が手伝い仕事をしている。", exclude=name)
         self.log(f"🤝 **{name}** {place}で手伝った（{'、'.join(gained)}）" + ("　続けて働いてはかどった" if bonus else ""))
-        return f"手伝って {'、'.join(gained)} を得た。" + ("続けて働いたのではかどった。" if bonus else "")
+        return f"手伝って {'、'.join(gained)} を得た。" + ("続けて働いたのではかどった。" if bonus else "") + self._mishap(name, tools=False)
 
     # ---------- 村の様子のうわさ ----------
 
@@ -824,6 +964,12 @@ class World:
         """name が売ってもいい item の数。仕事の材料は売らない。
         自分の作った品は持っている分すべて（店の主人が店にいれば棚の分も）。それ以外は自分の分を残して。"""
         v = self.villagers[name]
+        if item in MERCHANT_GOODS:  # 町の品：雑貨商人が店にいれば棚の分を売る。ほかの人は売らない（自分で使う）
+            if self.is_merchant(name) and v["location"] == v["workplace"]:
+                return self.data["stores"].get(v["workplace"], {}).get(item, 0)
+            return 0
+        if self.is_merchant(name) and item in EXPORTS:  # 商人が買い取った品は町へ持っていく分
+            return 0
         if self.uses(name, item):
             if self.at_order_shop(name) and item != "薪":  # 酒場は、料理に使う分（各 2 つ）を残して食材を店先で売る
                 return max(0, self.data["stores"][v["workplace"]].get(item, 0) - 2)
@@ -871,6 +1017,13 @@ class World:
         仕事の材料は 4 つまで仕入れる。薪は夜の分を 2 本まで。食事は空腹なら 2 つまで。"""
         v = self.villagers[buyer]
         have, price = self.has(buyer, item), self.price(item) or 99
+        if item in MERCHANT_GOODS:  # 町の品は、困りごとがあれば買う。薬草は余裕があれば家に 1 つ置いておく
+            if self.is_merchant(buyer):
+                return False
+            if self.needs_item(buyer, item):
+                return self.money(buyer) >= price
+            return (item == "薬草" and self.household_stock(buyer, "薬草") == 0
+                    and self.money(buyer) - price >= SAVINGS)
         if item == "薪" and self.uses(buyer, item) and self.household_stock(buyer, "薪") < NIGHT_WOOD:
             # 店の主人が買う薪は、家に今夜の分がなければまず家の暖房用。あれば店で使う分
             return self.money(buyer) >= price
@@ -908,13 +1061,24 @@ class World:
             stock = self.household_stock(buyer, "薪")
             if stock < NIGHT_WOOD:
                 return self.money(buyer) >= price
-            return stock < WOOD_STORE and self.money(buyer) - price * WOOD_LOT >= 40
+            return stock < WOOD_STORE and self.money(buyer) - price * WOOD_LOT >= SAVINGS
         if item in MEALS:
             return self.money(buyer) >= price and have < 2 and v["hunger"] >= 3
         if item in INGREDIENTS:  # 家で煮炊きする食材：家に食材がなく、薪があって懐に余裕があれば
             home_food = sum(self.home_stock(buyer, i) for i in INGREDIENTS)
-            return home_food < 2 and self.household_stock(buyer, "薪") >= COOK_WOOD * 2 and self.money(buyer) - price >= 40
+            return home_food < 2 and self.household_stock(buyer, "薪") >= COOK_WOOD * 2 and self.money(buyer) - price >= SAVINGS
         return False
+
+    def dump_amount(self, seller, item):
+        """seller が雑貨商人に売る数。かなり余っている（家の蔵と持ち歩きで「余っている」量を超える）ときだけ、
+        村で売れそうな分（その半分）を残して、残りをまとめて売る。"""
+        if item not in EXPORTS or self.is_merchant(seller):
+            return 0
+        total = self.surplus(seller, item) + max(0, self.home_stock(seller, item) - (NIGHT_WOOD * 2 if item == "薪" else FAMILY_KEEP["食材"]))
+        limit = RESERVE.get(item, 99)
+        if total < limit:
+            return 0
+        return max(0, min(self.surplus(seller, item), total - limit // 2))
 
     def _batches(self, maker):
         """maker が見込みの分を作るのに要る仕事の回数。"""
@@ -928,7 +1092,8 @@ class World:
             return "家族（や店の仲間）とは売り買いしない。必要なら give で分け合う。"
         if not self.price(item) or self.surplus(name, item) <= 0:
             return f"{item}を持っていない。"
-        if not self.will_buy(buyer, item):
+        dumping = self.is_merchant(buyer) and self.dump_amount(name, item) > 0  # 商人への買い取り（下で数を決める）
+        if not dumping and not self.will_buy(buyer, item):
             v["activity"] = f"{buyer}に{item}を売り込んでいる"
             self.log(f"🙅 **{buyer}** は **{name}** の{item}を買わなかった")
             return f"{buyer}には要らないと言われた。"
@@ -936,6 +1101,9 @@ class World:
         if item == "薪":  # 薪はひと束（10 本）を、相手が払える分まで
             n = min(WOOD_LOT, self.surplus(name, item), self.funds(buyer, item) // self.price(item))
         price = self.price(item) * n
+        if dumping:  # 雑貨商人には、かなり余った分をまとめて安く売る
+            n = self.dump_amount(name, item)
+            price = max(1, round(self.price(item) * n * EXPORT_RATE))
         buyer_shop, seller_shop = self.for_shop(buyer, item), self.from_shop(name, item)
         self._hand_over(name, buyer, item, n)
         self._settle(name, buyer, item, price, buyer_shop, seller_shop)
@@ -994,7 +1162,8 @@ class World:
                 else:
                     self.store_at(seller)[item] -= 1
         home_wood = item == "薪" and self.household_stock(buyer, "薪") < NIGHT_WOOD
-        if (self.store_at(buyer) is None and not self.uses(buyer, item)) or (home_wood and self.uses(buyer, item)):
+        if (self.store_at(buyer) is None and not self.uses(buyer, item)) or (
+                home_wood and (self.uses(buyer, item) or self.is_merchant(buyer))) or item in MERCHANT_GOODS:
             # 自分や家族のために買った物は買い物袋へ（売り物とは分ける。食べることはできる）
             self._add(self.villagers[buyer].setdefault("basket", {}), item, n)
         else:
@@ -1003,6 +1172,11 @@ class World:
             maker = next((o for o in self.partners(seller) if item in self.outputs(o)), None)
             if maker:
                 self.record_sale(maker, n)
+        if item in MERCHANT_GOODS:  # 困りごとに使う分は、その場で使う
+            bag = self.villagers[buyer]["basket"]
+            for _ in range(n):
+                if bag.get(item, 0) > 0 and self._use(buyer, item):
+                    bag[item] -= 1
         orders = self.data["orders"].get(self.villagers[buyer]["workplace"], {})
         if self.uses(buyer, item):
             for key in list(orders):  # 注文（品物か分類）のうち、この品が当てはまるものを減らす
@@ -1067,6 +1241,7 @@ class World:
         self.update_demand()
         self.split_profits()
         self.spoil()
+        self._back_from_town()
         homes = {}
         for name, v in self.villagers.items():
             self._take_wood_home(name)
@@ -1087,10 +1262,11 @@ class World:
                     need -= use
             else:
                 self.log(f"🥶 {home}には薪が足りず、寒い夜になった")
+            self._night_troubles(family)
             for name in family:
                 v = self.villagers[name]
                 v["hunger"] = min(10, v["hunger"] + 1)
-                v["energy"] = 10 if warm else 7
+                v["energy"] = (10 if warm else 7) - (1 if v.get("frayed") else 0)  # ほつれた服では冷えがこたえる
                 v["activity"] = "目を覚ましたところ"
                 night = ("夜のあいだ、薪を燃やして暖かく眠った。" if warm
                          else "薪がなく、夜の冷え込みであまり眠れなかった。")
@@ -1101,14 +1277,49 @@ class World:
         self.morning_assembly()
         return True
 
+    def _night_troubles(self, family):
+        """夜のあいだ：怪我は家に薬草があれば手当てし、なければ日がたって治っていく。服はときどきほつれる。"""
+        box = self.data["stores"].setdefault(self.villagers[family[0]]["home"], {})
+        for name in family:
+            v = self.villagers[name]
+            if self.injured(name):
+                if box.get("薬草", 0) > 0:
+                    box["薬草"] -= 1
+                    self._use(name, "薬草")
+                else:
+                    v["injured"] -= 1
+                    if not v["injured"]:
+                        self.log(f"🩹 **{name}** の怪我が治った")
+            if not self.is_merchant(name) and not v.get("frayed"):
+                if random.random() < FRAY["外" if v.get("outdoor_day") == self.data["day"] else "内"]:
+                    v["frayed"] = True
+                    self.log(f"👕 **{name}** の服がほつれた")
+
+    def town_day(self):
+        return self.data["day"] % TOWN_EVERY == 0
+
+    def _back_from_town(self):
+        """町へ行った商人は、買い取った品を町で薬草・服・道具と取り替えて帰ってくる（お金は村から出ていかない）。"""
+        for name, v in self.villagers.items():
+            if not self.is_merchant(name) or v["location"] in self.data["places"]:
+                continue
+            box = self.data["stores"].setdefault(v["workplace"], {})
+            took = {i: box.pop(i) for i in EXPORTS if box.get(i, 0) > 0}
+            got = {i: n - box.get(i, 0) for i, n in MERCHANT_GOODS.items() if box.get(i, 0) < n}
+            box.update(MERCHANT_GOODS)
+            v["hunger"] = min(v["hunger"], 2)  # 町で食べてきた
+            v["location"] = v["home"]
+            self.log(f"🧳 **{name}** が町から戻った（持って行った：{'、'.join(f'{i}×{n}' for i, n in took.items()) or 'なし'}"
+                     f"／仕入れた：{'、'.join(f'{i}×{n}' for i, n in got.items()) or 'なし'}）")
+
     def _take_wood_home(self, name):
-        """店じまい：店の主人は、家に今夜の薪がなければ、店の棚から一晩分を持ち帰る（自分の薪なので）。"""
+        """店じまい：店の主人（と雑貨商人）は、家に今夜の薪がなければ、店の棚から一晩分を持ち帰る（自分の薪なので）。"""
         v = self.villagers[name]
         shop = self.data["stores"].get(v["workplace"])
-        if shop is None or name not in self.shop_owners(v["workplace"]):
+        if shop is None or (name not in self.shop_owners(v["workplace"]) and not self.is_merchant(name)):
             return
         lacking = NIGHT_WOOD - self.household_stock(name, "薪")
-        spare = shop.get("薪", 0) - COOK_WOOD  # 明日の料理の 1 回分は店に残す
+        spare = shop.get("薪", 0) - (0 if self.is_merchant(name) else COOK_WOOD)  # 明日の料理の 1 回分は店に残す
         n = min(max(0, lacking), max(0, spare))
         if n > 0:
             shop["薪"] -= n
@@ -1135,12 +1346,19 @@ class World:
         for name, v in self.villagers.items():
             self._breakfast(name)
             self.pack_out(name)
+            if self.is_merchant(name) and self.town_day():  # 商人は今日は町へ出かける
+                v["location"] = "町"
+                v["activity"] = "町へ出かけている"
+                self.log(f"🧳 **{name}** は町へ出かけた（店は一日閉まる）")
+                continue
             v["location"] = ASSEMBLY_PLACE
             v["activity"] = "朝礼に出ている"
         have, want = {}, {}
         orders = self.data["orders"] = {}
         needed = {}
         for name, v in self.villagers.items():
+            if self.is_merchant(name):  # 商人の品は町の品と町へ持っていく分なので、村の手持ちには数えない
+                continue
             for item in PRICES:
                 have[item] = have.get(item, 0) + max(0, self.surplus(name, item))
             if self.shop_of(name):  # 店の棚の売り物（自分の作った分）
