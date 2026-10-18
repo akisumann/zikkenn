@@ -41,6 +41,8 @@ ACTION_TOOLS = [
         "to": {**S, "description": "働きながら話しかける相手。話さないなら空文字"},
         "message": {**S, "description": "働きながら口にするセリフ。話さないなら空文字"},
     }),
+    _tool("cook", "家で、食材 1 つと薪 1 本を使って煮炊きし、その場で食べる（麦→麦粥、魚→焼き魚、肉→焼き肉）。家族の食材や薪も使える。", {
+        "item": {**S, "description": "麦・魚・肉のどれか"}}),
     _tool("rest", "その場で休んで元気を回復する。", {}),
     _tool("do", "上のどれにも当てはまらないことをする（散歩、歌う、考え込む、掃除する、など）。", {
         "activity": {**S, "description": "何をしているかの描写（例：「井戸のそばで空を見上げている」）"},
@@ -48,12 +50,12 @@ ACTION_TOOLS = [
 ]
 # ついでにできる小さな用事。2 時間を使わず、1 回のターンで QUICK_LIMIT 回まで使える。
 QUICK_TOOLS = [
-    _tool("eat", "持っている食べ物を 1 つ食べる。", {"item": {**S, "description": "料理・パン（空腹がよく減る）。麦・魚・肉は生でかじれるが、腹はほとんどふくれない"}}),
+    _tool("eat", "持っている食べ物を 1 つ食べる。", {"item": {**S, "description": "料理・サンドイッチ・パン。麦・魚・肉は生では食べられない（家で cook する）"}}),
     _tool("give", "その場にいる人に物や銀貨を渡す。取引や贈り物に使う。", {
         "to": S, "item": {**S, "description": "持ち物の名前、または「銀貨」"}, "amount": I,
     }),
     _tool("buy", "その場にいる人から、村の相場で物を買う。相手に余りがなければ断られる。", {
-        "seller": S, "item": {**S, "description": "料理・パン・麦・魚・肉・薪"}, "amount": I,
+        "seller": S, "item": {**S, "description": "料理・サンドイッチ・パン・麦・魚・肉・薪"}, "amount": I,
     }),
     _tool("sell", "その場にいる人に、持ち物を 1 つ村の相場で売り込む。要らなければ断られる。", {
         "buyer": S, "item": S,
@@ -95,6 +97,8 @@ def run_tool(world, name, tool, args):
         return world.act_buy(name, args["seller"], args["item"], args["amount"])
     if tool == "sell":
         return world.act_sell(name, args["buyer"], args["item"])
+    if tool == "cook":
+        return world.act_cook(name, args["item"])
     if tool == "rest":
         return world.act_rest(name)
     if tool == "do":
@@ -104,6 +108,17 @@ def run_tool(world, name, tool, args):
     if tool == "update_impression":
         return world.update_impression(name, args["target"], args["change"], args["note"])
     return f"{tool} という行動はない。"
+
+
+def work_text(world, name):
+    recipes = world.recipes(name)
+    if not recipes:
+        return "品物は作らず、家のことをして家族と暮らしている。"
+    def one(r):
+        made = "、".join(f"{k}×{n}" for k, n in r["produce"].items())
+        need = "、".join(f"{k}×{n}" for k, n in r["needs"].items())
+        return f"{need}で{made}" if need else made
+    return "仕事をすると " + " / ".join(one(r) for r in recipes) + " ができる（材料がそろっている上のものから作る）。"
 
 
 def habits_text(v):
@@ -123,7 +138,7 @@ def system_prompt(world, name):
 
 ## あなた
 - {v['age']}歳、{v['job']}。家は「{v['home']}」、仕事場は「{v['workplace']}」。
-- {("仕事をすると" + "、".join(f"{k}×{n}" for k, n in v["produce"].items()) + "が手に入る。") if v["produce"] else "品物は作らず、家のことをして家族と暮らしている。"}{"仕事には毎回" + "、".join(f"{k}×{n}" for k, n in v["needs"].items()) + "が要る。" if v.get("needs") else ""}
+- {work_text(world, name)}
 - 性格：{v['personality']}
 - 願い：{v['goal']}
 
@@ -132,10 +147,10 @@ def system_prompt(world, name):
 
 ## この世界での過ごし方
 これはシミュレーションです。2 時間ごとに、あなたは「いまの状況」を受け取り、次の 2 時間に何をするかをツールで決めます。
-- 行動ツール（move / say / work / rest / do）は 1 回につき 1 つだけ使えます。使った時点でこの 2 時間は終わります。
+- 行動ツール（move / say / work / cook / rest / do）は 1 回につき 1 つだけ使えます。使った時点でこの 2 時間は終わります。
 - 小さな用事（eat / give / buy / sell）は 2 時間を使わず、行動の前に {QUICK_LIMIT} つまでできます。
 - remember と update_impression は心の中の動きなので、行動の前に何度でも使えます。大事な出来事や秘密、約束は remember に残してください。あなたが明日以降に思い出せるのは、記憶メモだけです。
-- 空腹が 10 に近づくとつらくなります。ちゃんとした食事はパン屋のパンと酒場の料理で、麦・魚・肉・薪を材料に作られます。食べ物は自分で作るか、人から買うか、分けてもらいます。村の相場は状況欄に出ます。値引きや物々交換は話し合いと give で行ってください。
+- 空腹が 10 に近づくとつらくなります。食事はパン屋のパン・サンドイッチと酒場の料理で、麦・魚・肉・薪を材料に作られます。食材は家で薪を使って煮炊きしても食べられますが、薪 1 本で 1 人前なので、店より薪を食います。食べ物は自分で作るか、人から買うか、分けてもらいます。村の相場は状況欄に出ます。値引きや物々交換は話し合いと give で行ってください。
 - 家族の食べ物は家族みんなのものです。家にいるときは、家族の誰が持っている食べ物でも食べられます。家族とは売り買いせず、分け合います。
 - 同じ仕事場で続けて働くと、段取りがよくなって実入りが増えます。
 - 村で何が足りない・余っているかは、自分で見たことと人から聞いたことでしかわかりません（状況欄の「知っている村の様子」）。話をすると、あなたの知っている様子も相手に伝わります。

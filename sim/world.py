@@ -19,17 +19,18 @@ DAY_HOURS = [6, 8, 10, 12, 14, 16, 18, 20]  # 1 ティック = 2 時間。22 時
 #                       ├→ 加工（パン屋・酒場の台所）→ 食事（パン・料理）
 #   薪 ────────────────┤
 #                       └→ 夜の暖（一家に 1 本）
-MEALS = {"料理": 5, "パン": 3}           # ちゃんとした食事。食べると減る空腹度
-INGREDIENTS = {"麦": 1, "魚": 1, "肉": 1}  # 食材。生でもかじれるが腹はふくれない
-FOOD = {**MEALS, **INGREDIENTS}
+MEALS = {"料理": 5, "サンドイッチ": 5, "パン": 3}  # 店で作る食事。食べると減る空腹度
+INGREDIENTS = {"麦": "麦粥", "魚": "焼き魚", "肉": "焼き肉"}  # 食材。生では食べず、家で薪を使って煮炊きする
+HOME_MEAL = 4  # 家で煮炊きした食事で減る空腹度。薪 1 本で 1 人前なので、店より薪を食う
+FOOD = dict(MEALS)
 CATEGORIES = {"食材": list(INGREDIENTS)}  # 仕事の材料に「どれでもいい」を指定するための分類
-PRICES = {"料理": 40, "パン": 20, "麦": 20, "魚": 30, "肉": 30, "薪": 20}  # 村の相場（銀貨）
+PRICES = {"料理": 40, "サンドイッチ": 30, "パン": 20, "麦": 20, "魚": 30, "肉": 30, "薪": 20}  # 村の相場（銀貨）
 HELP_JOBS = {"畑": {"麦": 1}, "川辺": {"魚": 1}, "森の入口": {"薪": 1}}  # 誰でもできる手伝い仕事（本業より実入りは少ない）
 # これだけ売れ残ったら「余っている」と感じる（村で 1〜2 日分の備蓄の目安）
-RESERVE = {"麦": 8, "魚": 4, "肉": 4, "薪": 8, "パン": 8, "料理": 6}
+RESERVE = {"麦": 8, "魚": 4, "肉": 4, "薪": 8, "パン": 8, "サンドイッチ": 6, "料理": 6}
 NEWS_DAYS = 2  # 聞いた村の様子を当てにする日数
 SAY_STATE = {"不足": "足りない", "余り": "余っている"}
-KEEP = {"料理": 2, "パン": 2, "麦": 1, "魚": 1, "肉": 1, "薪": 1}  # 自分用に残す数。超えた分なら売る
+KEEP = {"料理": 2, "サンドイッチ": 2, "パン": 2, "麦": 1, "魚": 1, "肉": 1, "薪": 1}  # 自分用に残す数。超えた分なら売る
 WEATHERS = [("晴れ", 5), ("曇り", 3), ("雨", 2), ("霧", 1), ("嵐", 0.5)]
 MAX_MEMORIES = 40
 MAX_INBOX = 30
@@ -226,19 +227,20 @@ class World:
             if v["location"] not in HELP_JOBS:
                 return f"仕事は{v['workplace']}でしかできない（手伝いなら{'・'.join(HELP_JOBS)}でできる）。"
             return self._help(name)
-        lacking = self.lacking(name)
-        if lacking:
+        recipe = next((r for r in self.recipes(name) if not self._missing(name, r["needs"])), None)
+        if recipe is None:
+            lacking = self.lacking(name)
             for need in lacking:
                 for item in self._members(need):
                     self.note(name, item, "不足")
             return f"仕事に使う{'、'.join(lacking)}が足りない。"
-        for need, n in v.get("needs", {}).items():
+        for need, n in recipe["needs"].items():
             for _ in range(n):
                 item = max(self._members(need), key=lambda i: v["inventory"].get(i, 0))
                 v["inventory"][item] -= 1
         bonus = self._streak(name)
         gained = []
-        for item, n in v["produce"].items():
+        for item, n in recipe["produce"].items():
             if self.data["weather"] in ("雨", "嵐") and v["workplace"] in ("畑", "川辺", "森の入口"):
                 n = max(1, n // 2)
             n += bonus
@@ -301,8 +303,32 @@ class World:
         """村じゅうにある item の数。"""
         return sum(v["inventory"].get(item, 0) for v in self.villagers.values())
 
+    def act_cook(self, name, item):
+        """家で、食材 1 つと薪 1 本を使って煮炊きし、その場で食べる。家族の食材や薪も使える。"""
+        v = self.villagers[name]
+        if v["location"] != v["home"]:
+            return "煮炊きは家でしかできない。"
+        if item not in INGREDIENTS:
+            return f"{item}は煮炊きできない。食材: " + "、".join(INGREDIENTS)
+        owner = self.food_owner(name, item)
+        if owner is None:
+            return f"家に{item}がない。"
+        wood = self.food_owner(name, "薪")
+        if wood is None:
+            return "家に薪がない。"
+        self.villagers[owner]["inventory"][item] -= 1
+        self.villagers[wood]["inventory"]["薪"] -= 1
+        dish = INGREDIENTS[item]
+        v["hunger"] = max(0, v["hunger"] - HOME_MEAL)
+        v["activity"] = f"{dish}を作って食べている"
+        self.broadcast(v["location"], f"{name}が{dish}を作って食べている。", exclude=name)
+        self.log(f"🍳 **{name}** 家で{dish}を作って食べた")
+        return f"{dish}を作って食べた。空腹 {v['hunger']}/10。"
+
     def act_eat(self, name, item):
         v = self.villagers[name]
+        if item in INGREDIENTS:
+            return f"{item}は生では食べられない。家で cook（煮炊き）すれば食べられる。"
         if item not in FOOD:
             return f"{item}は食べられない。食べられるもの: " + "、".join(FOOD)
         owner = self.food_owner(name, item)
@@ -352,15 +378,39 @@ class World:
     def _members(self, need):
         return CATEGORIES.get(need, [need])
 
-    def lacking(self, name):
-        """仕事の材料で足りないもの（分類名のまま返す）。"""
+    def recipes(self, name):
+        """name の仕事の作り方。上から順に、材料がそろっているものを作る。"""
         v = self.villagers[name]
-        return [need for need, n in v.get("needs", {}).items()
+        if v.get("recipes"):
+            return v["recipes"]
+        return [{"needs": v.get("needs", {}), "produce": v["produce"]}] if v["produce"] else []
+
+    def outputs(self, name):
+        return [item for r in self.recipes(name) for item in r["produce"]]
+
+    def inputs(self, name):
+        """仕事の材料と、1 回に要る最大の数。"""
+        needs = {}
+        for r in self.recipes(name):
+            for need, n in r["needs"].items():
+                needs[need] = max(needs.get(need, 0), n)
+        return needs
+
+    def _missing(self, name, needs):
+        v = self.villagers[name]
+        return [need for need, n in needs.items()
                 if sum(v["inventory"].get(i, 0) for i in self._members(need)) < n]
+
+    def lacking(self, name):
+        """どの作り方も材料がそろわないとき、基本の作り方（いちばん下）で足りないもの。"""
+        recipes = self.recipes(name)
+        if not recipes or any(not self._missing(name, r["needs"]) for r in recipes):
+            return []
+        return self._missing(name, recipes[-1]["needs"])
 
     def uses(self, name, item):
         """item が name の仕事の材料かどうか。"""
-        return any(item in self._members(need) for need in self.villagers[name].get("needs", {}))
+        return any(item in self._members(need) for need in self.inputs(name))
 
     def surplus(self, name, item):
         """name が売ってもいい item の数。仕事の材料は売らない。"""

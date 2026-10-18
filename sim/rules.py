@@ -4,7 +4,7 @@
 ツールは AI と同じものを使う。
 
 ついでの用事（上から順に、当てはまるものを）
-  1. 食べる   … 空腹なら食事をとる。食事時は少しの空腹でも。本当に飢えたら食材をかじる
+  1. 食べる   … 空腹なら食事をとる。食事時は少しの空腹でも
   2. 買う     … 食事の手持ちがなければ、目の前の人から買っておく
   3. 分ける   … 家族、頼んできた人、好きな人が腹ぺこなら食事を分ける
   4. 仕入れる … 加工する人は、仕事の材料を 2 回分を目安に仕入れる
@@ -13,7 +13,8 @@
 
 この 2 時間の過ごし方（上から順に、当てはまるものを 1 つ）
   0. 反応     … 見聞きしたことに心を動かす（印象・記憶。ターンは使わない）
-  1. 腹ぺこ   … 食事を売っている人のところへ行く。金がなければ売り物を売りに行く
+  1. 腹ぺこ   … 家なら食材と薪で煮炊きする（夜の薪は残す）。そうでなければ食事を売っている人の
+                ところへ行く。金がなければ売り物を売りに行く
   2. 疲労     … くたくたなら家に帰って休む
   3. 会話     … 話しかけられたら返事をする。話し好きは話しかけ、噂好きは噂を広める。
                 仕事の時間は話し込まず仕事場へ。同じ仕事場に人がいれば、働きながら話す
@@ -92,7 +93,7 @@ class RuleBrain:
 
         # 1. 空腹なら食べる（食事時は少しの空腹でも）。本当に飢えたら食材をかじる
         if v["hunger"] >= 5 or (meal_time and v["hunger"] >= 3):
-            if self.eat_something(world, name) or (v["hunger"] >= 10 and self.eat_something(world, name, raw=True)):
+            if self.eat_something(world, name):
                 return True
         # 2. 食事の手持ちがなければ、目の前の人から買っておく
         if not has_meal and v["hunger"] >= 2 and self.buy_food(world, name, others):
@@ -111,6 +112,17 @@ class RuleBrain:
             return True
         return False
 
+    def cook(self, world, name):
+        v = world.villagers[name]
+        wood = world.household_stock(name, "薪")
+        if wood < 2 and not (wood >= 1 and v["hunger"] >= 8):  # 夜を越す 1 本は残したい
+            return False
+        for item in INGREDIENTS:
+            if world.food_owner(name, item):
+                run_tool(world, name, "cook", {"item": item})
+                return True
+        return False
+
     def share(self, world, name, others):
         v = world.villagers[name]
         begged = {e["actor"] for e in v["inbox"] if e["kind"] == "say" and e["to"] == name and e["quote"] == BEG}
@@ -126,7 +138,7 @@ class RuleBrain:
     def restock(self, world, name, others):
         """仕事の材料を、2 回分を目安に仕入れる。"""
         v = world.villagers[name]
-        for need, n in v.get("needs", {}).items():
+        for need, n in world.inputs(name).items():
             items = CATEGORIES.get(need, [need])
             if sum(v["inventory"].get(i, 0) for i in items) >= n * 2:
                 continue
@@ -148,7 +160,10 @@ class RuleBrain:
         working = self.plan(world, v) in ("仕事場", v["workplace"]) and v["energy"] > 2  # 仕事の時間
 
         # 1. 腹ぺこで食事がない：食事を売っている人のところへ。だめなら売り物を売りに行く。それもなければ働く
-        has_meal = any(v["inventory"].get(f, 0) for f in MEALS)
+        has_meal = any(world.food_owner(name, f) for f in MEALS)
+        # 0. 家にいて腹が減っていて、店の食事がなければ、家の食材と薪で煮炊きする（夜の薪は残す）
+        if here == v["home"] and v["hunger"] >= 4 and not has_meal and self.cook(world, name):
+            return
         if v["hunger"] >= 6 and not has_meal:
             seller_place = self.find_food_seller(world, name)
             if seller_place and seller_place != here and v["money"] >= min(world.price(m) for m in MEALS):
@@ -209,11 +224,9 @@ class RuleBrain:
 
     # ---------- 1〜4. 体と食べ物 ----------
 
-    def eat_something(self, world, name, raw=False):
-        """食事（腹持ちのいい順）をとる。raw なら、売り物でない食材をかじる。"""
+    def eat_something(self, world, name):
+        """食事（腹持ちのいい順）をとる。"""
         food = [f for f in sorted(MEALS, key=MEALS.get, reverse=True) if world.food_owner(name, f)]
-        if raw and not food:
-            food = [f for f in INGREDIENTS if world.food_owner(name, f)]
         if not food:
             return False
         run_tool(world, name, "eat", {"item": food[0]})
@@ -397,11 +410,11 @@ class RuleBrain:
         if v.get("today_job", [None])[0] == world.data["day"]:
             return v["today_job"][1]
         job = v["workplace"]
-        over = [i for i in v["produce"] if world.surplus(name, i) >= RESERVE.get(i, 99)]
+        over = [i for i in world.outputs(name) if world.surplus(name, i) >= RESERVE.get(i, 99)]
         if over:
             news = world.recent_news(name)
             short = [place for place, out in HELP_JOBS.items()
-                     if not any(i in v["produce"] for i in out)
+                     if not any(i in world.outputs(name) for i in out)
                      and any(news.get(i, [None])[0] == "不足" for i in out)]
             if short:
                 job = min(short, key=lambda p: world.travel_turns(v["home"], p))
@@ -450,7 +463,7 @@ class RuleBrain:
 
         if dest != here:
             run_tool(world, name, "move", {"destination": dest})
-        elif here == v["workplace"] and plan == "仕事場" and not v["produce"]:
+        elif here == v["workplace"] and plan == "仕事場" and not world.outputs(name):
             run_tool(world, name, "do", {"activity": random.choice(CHORES)})  # 品物を作らない人は家のことをする
         elif here == dest and plan == "仕事場" and here in HELP_JOBS and here != v["workplace"] and v["energy"] > 2:
             run_tool(world, name, "work", self.talk_while_working(world, name, others))  # 手伝い仕事
