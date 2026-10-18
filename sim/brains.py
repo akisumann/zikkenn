@@ -83,11 +83,11 @@ def run_tool(world, name, tool, args):
     if tool == "move":
         return world.act_move(name, args["destination"])
     if tool == "say":
-        return world.act_say(name, args["to"], args["message"])
+        return world.act_say(name, args["to"], args["message"], small=args.get("small", False))
     if tool == "work":
         result = world.act_work(name)
         if args.get("message") and args.get("to"):
-            result += " " + world.act_say(name, args["to"], args["message"])
+            result += " " + world.act_say(name, args["to"], args["message"], small=args.get("small", False))
         return result
     if tool == "eat":
         return world.act_eat(name, args["item"])
@@ -128,7 +128,16 @@ def habits_text(v):
     lines.append("- 基本の一日：朝は広場の朝礼、8〜14時は仕事場で働き、夕方は自由、日暮れは酒場に集まり、夜は家に帰る。")
     lines += [f"- {h['desc']}" for h in v.get("habits", [])]
     if v.get("lines"):
-        lines.append("- 口癖：" + " / ".join(f"「{l}」" for l in v["lines"]))
+        def one(l):
+            if isinstance(l, str):
+                return f"「{l}」"
+            return f"「{l['text']}」（{l['to']}にだけ）" if l.get("to") else f"「{l['text']}」（{l['not_to']}には言わない）"
+        lines.append("- 口癖：" + " / ".join(one(l) for l in v["lines"]))
+    st = v.get("style", {})
+    if st.get("greet"):
+        lines.append("- 話し方の例：" + " / ".join(f"「{x.format(t='○○')}」" for x in st["greet"][:2] + st.get("reply", [])[:2]))
+    if v.get("call"):
+        lines.append("- 人の呼び方：" + "、".join(f"{k}は「{c}」" for k, c in v["call"].items()))
     return "\n".join(lines)
 
 

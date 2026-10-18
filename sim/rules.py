@@ -40,12 +40,14 @@ MEAL_HOURS = (6, 12, 18)
 OUTDOOR = ("畑", "川辺", "森の入口")
 FREE_PLACES = ["広場", "広場", "川辺", "酒場", "パン屋", "森の入口"]
 
-GREET_GOOD = ["{t}、元気？", "やあ{t}、今日もいい日だね。", "{t}、ちょっと聞いてよ。"]
-GREET_PLAIN = ["{t}か。", "どうも、{t}。", "{t}、何か用？"]
-GREET_BAD = ["……ちっ、{t}か。", "{t}、話しかけないでくれる？"]
-REPLY_GOOD = ["うんうん、そうだね。", "へえ、そうなんだ！", "あはは、{t}らしいや。", "わかるよ、それ。"]
-REPLY_PLAIN = ["ふうん。", "そうか。", "まあ、そういうこともあるさ。"]
-REPLY_BAD = ["……あんたには関係ないだろ。", "はいはい。"]
+# 口調。村人ごとに seed の style で上書きする（あいさつ・相づち・うわさ・村の様子・物乞いの言い方）
+DEFAULT_STYLE = {
+    "greet": ["{t}、こんにちは。"], "greet_bad": ["……{t}。"],
+    "reply": ["そうなんだ。", "なるほど。"], "reply_bad": ["……そう。"],
+    "gossip": "{who}が「{q}」って言ってたよ。", "news": "{item}が{state}らしいよ。",
+    "beg": "すまないけど、何か食べるものを分けてくれないか。",
+}
+STATE_WORD = {"不足": "足りない", "余り": "余ってる"}
 IDLE = {
     "広場": ["井戸のそばのベンチに腰かけている", "広場をぶらぶら歩いている"],
     "川辺": ["川面に石を投げている", "水の流れをぼんやり眺めている"],
@@ -56,7 +58,6 @@ IDLE = {
 }
 CHORES = ["家の掃除をしている", "繕い物をしている", "かまどの火の番をしている", "家族の洗濯物を干している"]
 HOME_IDLE = ["家の中を片づけている", "窓の外を眺めている", "繕い物をしている"]
-BEG = "ねえ、何か食べるものを分けてくれない？　お腹がぺこぺこで……。"
 RAINY = ["雨音を聞きながら道具の手入れをしている", "雨宿りしながら空を見上げている"]
 
 
@@ -125,7 +126,7 @@ class RuleBrain:
 
     def share(self, world, name, others):
         v = world.villagers[name]
-        begged = {e["actor"] for e in v["inbox"] if e["kind"] == "say" and e["to"] == name and e["quote"] == BEG}
+        begged = {e["actor"] for e in v["inbox"] if e["kind"] == "say" and e["to"] == name and is_beg(world, e)}
         for o in others:
             family = world.villagers[o]["home"] == v["home"]
             food = self.any_food(world, name) if family else self.spare_food(world, name)
@@ -172,7 +173,7 @@ class RuleBrain:
             if self.market_trip(world, name, minimum=1):
                 return
             if others and v["hunger"] >= 9 and not working and random.random() < 0.3:
-                act("say", to=random.choice(others), message=BEG)
+                act("say", to=random.choice(others), message=style(v)["beg"], small=True)
                 return
 
         # 2. 疲労：くたくたなら家に帰って休む
@@ -184,7 +185,8 @@ class RuleBrain:
         if not working:
             talker = self.addressed_by(world, name, others)
             if talker and random.random() < v.get("talk", 0.5) + 0.3:
-                act("say", to=talker, message=self.reply(v, talker))
+                message, small = self.reply(world, name, talker)
+                act("say", to=talker, message=message, small=small)
                 return
             if others and random.random() < v.get("talk", 0.5) * 0.4:
                 self.chat(world, name, others)
@@ -217,7 +219,7 @@ class RuleBrain:
                 note = v["impressions"].get(actor, {}).get("note") or "よく話しかけてくる"
                 world.update_impression(name, actor, 1 if score >= 0 else -1, note)
             elif (e["kind"] == "say" and e["to"] != name and name in (e.get("quote") or "")
-                  and not is_small_talk(world, e["quote"])):
+                  and not is_small_talk(e)):
                 world.remember(name, f"{actor}が私のことを話していた：「{e['quote']}」")
             elif e["kind"] == "refuse" and e["to"] == name:
                 pass  # 断った側は特に気にしない
@@ -320,49 +322,56 @@ class RuleBrain:
                 return e["actor"]
         return None
 
-    def reply(self, v, talker):
-        s = self.score(v, talker)
-        pool = REPLY_GOOD if s >= 2 else REPLY_BAD if s <= -2 else REPLY_PLAIN
-        if random.random() < 0.4 and v.get("lines"):
-            return random.choice(v["lines"])
-        return random.choice(pool).format(t=talker)
+    def reply(self, world, name, talker):
+        """返事をする。たまに口癖で返す。セリフは、その人の口調と相手の呼び方で。"""
+        v = world.villagers[name]
+        lines = lines_for(v, talker)
+        if random.random() < 0.3 and lines:
+            return random.choice(lines), False
+        pool = style(v)["reply_bad" if self.score(v, talker) <= -2 else "reply"]
+        return random.choice(pool).format(t=address(world, name, talker)), True
 
     def talk_while_working(self, world, name, others):
         """同じ場所にいる人と、手を動かしながら話す。話しかけられていれば返事をする。"""
         v = world.villagers[name]
         talker = self.addressed_by(world, name, others)
         if talker and random.random() < v.get("talk", 0.5) + 0.3:
-            return {"to": talker, "message": self.reply(v, talker)}
+            message, small = self.reply(world, name, talker)
+            return {"to": talker, "message": message, "small": small}
         if others and random.random() < v.get("talk", 0.5) * 0.6:
-            to, message = self.pick_chat(world, name, others)
-            return {"to": to, "message": message}
+            to, message, small = self.pick_chat(world, name, others)
+            return {"to": to, "message": message, "small": small}
         return {"to": "", "message": ""}
 
     def chat(self, world, name, others):
-        to, message = self.pick_chat(world, name, others)
-        run_tool(world, name, "say", {"to": to, "message": message})
+        to, message, small = self.pick_chat(world, name, others)
+        run_tool(world, name, "say", {"to": to, "message": message, "small": small})
 
     def pick_chat(self, world, name, others):
-        """誰かに話しかける。噂好きなら、聞いた話を広める。"""
+        """誰かに話しかける。(相手, セリフ, 噂にする価値のない小話か) を返す。
+        村の様子を伝える／噂を広める／口癖を言う／あいさつする、のどれか。"""
         v = world.villagers[name]
+        st = style(v)
+        targeted = [(l["to"], l["text"]) for l in v.get("lines", []) if isinstance(l, dict) and l.get("to") in others]
+        if targeted and random.random() < 0.3:  # その人にだけ言いたいことがある
+            to, text = random.choice(targeted)
+            return to, text, False
         target = max(others, key=lambda o: self.score(v, o) + random.random() * 3)
         heard = [e for e in v["inbox"] + v.get("rumors", [])
-                 if e["kind"] == "say" and e["actor"] not in (name, target)
-                 and not is_small_talk(world, e["quote"])]
+                 if e["kind"] == "say" and e["actor"] not in (name, target) and e["to"] not in (name, target)
+                 and not is_small_talk(e)]  # 自分に言われたこと・相手に言われたことは言いふらさない
         news = world.recent_news(name)
         if news and random.random() < 0.4:
-            item, (state, _, src) = random.choice(list(news.items()))
-            msg = f"{item}が{'足りない' if state == '不足' else '余ってる'}{'んだ' if src == '自分で見た' else 'らしいよ'}。"
-        elif heard and random.random() < v.get("gossip", 0.3):
+            item, (state, _, _) = random.choice(list(news.items()))
+            return target, st["news"].format(item=item, state=STATE_WORD[state]), True
+        if heard and random.random() < v.get("gossip", 0.3):
             e = random.choice(heard)
-            msg = f"ねえ聞いた？ {e['actor']}が「{e['quote']}」って言ってたよ。"
-        elif v.get("lines") and random.random() < 0.6:
-            msg = random.choice(v["lines"])
-        else:
-            s = self.score(v, target)
-            pool = GREET_GOOD if s >= 2 else GREET_BAD if s <= -2 else GREET_PLAIN
-            msg = random.choice(pool).format(t=target)
-        return target, msg
+            return target, st["gossip"].format(who=address(world, name, e["actor"]), q=e["quote"]), True
+        lines = lines_for(v, target)
+        if lines and random.random() < 0.6:
+            return target, random.choice(lines), False
+        pool = st["greet_bad" if self.score(v, target) <= -2 else "greet"]
+        return target, random.choice(pool).format(t=address(world, name, target)), True
 
     # ---------- 6. 習慣 ----------
 
@@ -481,12 +490,35 @@ class RuleBrain:
             run_tool(world, name, "do", {"activity": random.choice(IDLE.get(here, ["ぼんやりしている"]))})
 
 
-def is_small_talk(world, quote):
-    """あいさつや相づちなど、噂にする価値のないセリフか。"""
-    if not quote or len(quote) < 8 or quote == BEG or quote.startswith("ねえ聞いた"):
-        return True
-    if ("が足りない" in quote or "が余ってる" in quote) and quote.endswith(("らしいよ。", "んだ。")):
-        return True  # 村の様子の話は、それ自体が伝わるので噂話にはしない
-        return True
-    templates = GREET_GOOD + GREET_PLAIN + GREET_BAD + REPLY_GOOD + REPLY_PLAIN + REPLY_BAD
-    return any(quote == t.format(t=n) for t in templates for n in world.villagers)
+def style(v):
+    return {**DEFAULT_STYLE, **v.get("style", {})}
+
+
+def address(world, speaker, target):
+    """speaker が target を呼ぶときの呼び名。決まっていなければ、15 歳以上年上ならさん付け。"""
+    v = world.villagers[speaker]
+    if target in v.get("call", {}):
+        return v["call"][target]
+    if world.villagers[target]["age"] - v["age"] >= 15:
+        return f"{target}さん"
+    return target
+
+
+def lines_for(v, target):
+    """target に向かって言える口癖。宛先つきのものはその人にだけ、not_to のものはその人以外に。"""
+    out = []
+    for line in v.get("lines", []):
+        if isinstance(line, str):
+            out.append(line)
+        elif line.get("to") == target or (line.get("not_to") and line["not_to"] != target):
+            out.append(line["text"])
+    return out
+
+
+def is_beg(world, e):
+    return e.get("actor") in world.villagers and e.get("quote") == style(world.villagers[e["actor"]])["beg"]
+
+
+def is_small_talk(e):
+    """あいさつ・相づち・噂話・村の様子の話など、噂として広める価値のないセリフか。"""
+    return e.get("small") or not e.get("quote") or len(e["quote"]) < 8

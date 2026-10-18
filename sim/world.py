@@ -139,10 +139,10 @@ class World:
         with path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
 
-    def broadcast(self, place, text, exclude=None, kind="see", actor=None, to=None, quote=None):
-        """その場にいる村人の耳と目に、出来事を届ける。"""
+    def broadcast(self, place, text, exclude=None, kind="see", actor=None, to=None, quote=None, small=False):
+        """その場にいる村人の耳と目に、出来事を届ける。small はあいさつ等の、噂にならない小話。"""
         event = {"t": f"{self.hour:02d}:00 {place}: {text}", "kind": kind,
-                 "actor": actor, "to": to, "quote": quote}
+                 "actor": actor, "to": to, "quote": quote, "small": small}
         for name in self.people_at(place, exclude=exclude):
             inbox = self.villagers[name]["inbox"]
             inbox.append(event)
@@ -208,7 +208,7 @@ class World:
         self.log(f"🚶 **{name}** {src} → {destination}")
         return f"{destination}に着いた。"
 
-    def act_say(self, name, to, message):
+    def act_say(self, name, to, message, small=False):
         v = self.villagers[name]
         here = v["location"]
         present = self.people_at(here, exclude=name)
@@ -217,7 +217,7 @@ class World:
         target = "" if to in ("みんな", "ひとりごと") else f"→{to}"
         v["activity"] = f"{to}と話している" if target else "話している"
         self.broadcast(here, f"{name}{target}「{message}」", exclude=name,
-                       kind="say", actor=name, to=to, quote=message)
+                       kind="say", actor=name, to=to, quote=message, small=small)
         self.log(f"💬 **{name}**{target}（{here}）「{message}」")
         for listener in present:
             self.share_news(name, listener)
