@@ -229,14 +229,26 @@ class World:
         v = self.villagers[name]
         if item not in FOOD:
             return f"{item}は食べられない。食べられるもの: " + "、".join(FOOD)
-        if v["inventory"].get(item, 0) <= 0:
+        owner = self.food_owner(name, item)
+        if owner is None:
             return f"{item}を持っていない。"
-        v["inventory"][item] -= 1
+        self.villagers[owner]["inventory"][item] -= 1
         v["hunger"] = max(0, v["hunger"] - FOOD[item])
         v["activity"] = f"{item}を食べている"
         self.broadcast(v["location"], f"{name}が{item}を食べている。", exclude=name)
         self.log(f"🍞 **{name}** {item}を食べた")
         return f"{item}を食べた。空腹 {v['hunger']}/10。"
+
+    def food_owner(self, name, item):
+        """name が食べられる item の持ち主。自分の分か、家にいるなら家族の分（家の食べ物は家族のもの）。"""
+        v = self.villagers[name]
+        if v["inventory"].get(item, 0) > 0:
+            return name
+        if v["location"] == v["home"]:
+            for other, ov in self.villagers.items():
+                if ov["home"] == v["home"] and ov["inventory"].get(item, 0) > 0:
+                    return other
+        return None
 
     def act_give(self, name, to, item, amount):
         v = self.villagers[name]
@@ -280,8 +292,18 @@ class World:
             return 0
         return self.villagers[name]["inventory"].get(item, 0) - KEEP.get(item, 0)
 
+    def family(self, a, b):
+        return self.villagers[a]["home"] == self.villagers[b]["home"]
+
+    def household_stock(self, name, item):
+        """name の一家全員が持っている item の数。"""
+        home = self.villagers[name]["home"]
+        return sum(v["inventory"].get(item, 0) for v in self.villagers.values() if v["home"] == home)
+
     def will_sell(self, seller, buyer, item):
-        """村の決まり：余っていて、相手をひどく嫌っていなければ、相場で売る。"""
+        """村の決まり：余っていて、相手をひどく嫌っていなければ、相場で売る。家族とは売り買いせず分け合う。"""
+        if self.family(seller, buyer):
+            return False
         imp = self.villagers[seller]["impressions"].get(buyer, {"score": 0})["score"]
         return self.surplus(seller, item) > 0 and imp >= -2
 
@@ -292,8 +314,8 @@ class World:
         have, price = v["inventory"].get(item, 0), self.price(item) or 99
         if self.uses(buyer, item):
             return v["money"] >= price and have < 4
-        if item == "薪":
-            return v["money"] - price >= 30 and have < 2
+        if item == "薪":  # 夜の薪は一家で 1 本。家族の誰かが持っていれば買わない
+            return v["money"] - price >= 30 and self.household_stock(buyer, "薪") < 2
         if item in MEALS:
             return v["money"] >= price and have < 2 and v["hunger"] >= 3
         return False
@@ -302,6 +324,8 @@ class World:
         v = self.villagers[name]
         if buyer not in self.people_at(v["location"], exclude=name):
             return f"{buyer}はここにいない。"
+        if self.family(name, buyer):
+            return "家族とは売り買いしない。必要なら give で分け合う。"
         if not self.price(item) or v["inventory"].get(item, 0) <= 0:
             return f"{item}を持っていない。"
         if not self.will_buy(buyer, item):
@@ -324,6 +348,8 @@ class World:
         v = self.villagers[name]
         if seller not in self.people_at(v["location"], exclude=name):
             return f"{seller}はここにいない。"
+        if self.family(name, seller):
+            return "家族とは売り買いしない。必要なら分けてもらう。"
         if not self.price(item):
             return f"{item}は売り買いできない。相場: " + self.price_list()
         amount = max(1, amount)

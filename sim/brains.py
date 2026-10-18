@@ -116,7 +116,7 @@ def system_prompt(world, name):
 
 ## あなた
 - {v['age']}歳、{v['job']}。家は「{v['home']}」、仕事場は「{v['workplace']}」。
-- 仕事をすると{"、".join(f"{k}×{n}" for k, n in v["produce"].items())}が手に入る。{"仕事には毎回" + "、".join(f"{k}×{n}" for k, n in v["needs"].items()) + "が要る。" if v.get("needs") else ""}
+- {("仕事をすると" + "、".join(f"{k}×{n}" for k, n in v["produce"].items()) + "が手に入る。") if v["produce"] else "品物は作らず、家のことをして家族と暮らしている。"}{"仕事には毎回" + "、".join(f"{k}×{n}" for k, n in v["needs"].items()) + "が要る。" if v.get("needs") else ""}
 - 性格：{v['personality']}
 - 願い：{v['goal']}
 
@@ -129,6 +129,7 @@ def system_prompt(world, name):
 - 小さな用事（eat / give / buy / sell）は 2 時間を使わず、行動の前に {QUICK_LIMIT} つまでできます。
 - remember と update_impression は心の中の動きなので、行動の前に何度でも使えます。大事な出来事や秘密、約束は remember に残してください。あなたが明日以降に思い出せるのは、記憶メモだけです。
 - 空腹が 10 に近づくとつらくなります。ちゃんとした食事はパン屋のパンと酒場の料理で、麦・魚・肉・薪を材料に作られます。食べ物は自分で作るか、人から買うか、分けてもらいます。村の相場は状況欄に出ます。値引きや物々交換は話し合いと give で行ってください。
+- 家族の食べ物は家族みんなのものです。家にいるときは、家族の誰が持っている食べ物でも食べられます。家族とは売り買いせず、分け合います。
 - 夜 22 時になると、全員が自動で家に帰って眠ります。一家で薪を 1 本燃やせば暖かくよく眠れますが、なければ冷えてあまり疲れが取れません。
 
 ## 心がけ

@@ -49,6 +49,7 @@ IDLE = {
     "森の入口": ["木々のざわめきに耳を澄ませている", "きのこを探して地面を見ている"],
     "畑": ["畝のあいだを見回っている"],
 }
+CHORES = ["家の掃除をしている", "繕い物をしている", "かまどの火の番をしている", "家族の洗濯物を干している"]
 HOME_IDLE = ["家の中を片づけている", "窓の外を眺めている", "繕い物をしている"]
 BEG = "ねえ、何か食べるものを分けてくれない？　お腹がぺこぺこで……。"
 RAINY = ["雨音を聞きながら道具の手入れをしている", "雨宿りしながら空を見上げている"]
@@ -69,7 +70,7 @@ class RuleBrain:
         here = v["location"]
         others = world.people_at(here, exclude=name)
         meal_time = world.hour in MEAL_HOURS
-        has_meal = any(v["inventory"].get(f, 0) for f in MEALS)
+        has_meal = any(world.food_owner(name, f) for f in MEALS)
 
         # 1. 空腹なら食べる（食事時は少しの空腹でも）。本当に飢えたら食材をかじる
         if v["hunger"] >= 5 or (meal_time and v["hunger"] >= 3):
@@ -192,10 +193,9 @@ class RuleBrain:
 
     def eat_something(self, world, name, raw=False):
         """食事（腹持ちのいい順）をとる。raw なら、売り物でない食材をかじる。"""
-        inv = world.villagers[name]["inventory"]
-        food = [f for f in sorted(MEALS, key=MEALS.get, reverse=True) if inv.get(f, 0) > 0]
+        food = [f for f in sorted(MEALS, key=MEALS.get, reverse=True) if world.food_owner(name, f)]
         if raw and not food:
-            food = [f for f in INGREDIENTS if inv.get(f, 0) > 0]
+            food = [f for f in INGREDIENTS if world.food_owner(name, f)]
         if not food:
             return False
         run_tool(world, name, "eat", {"item": food[0]})
@@ -231,7 +231,7 @@ class RuleBrain:
                 continue
             if world.surplus(name, item) <= 0 or (item in MEALS and not include_food):
                 continue
-            buyers = [o for o in others if world.will_buy(o, item)]
+            buyers = [o for o in others if world.will_buy(o, item) and not world.family(name, o)]
             if buyers:
                 run_tool(world, name, "sell", {"buyer": random.choice(buyers), "item": item})
                 return True
@@ -400,6 +400,8 @@ class RuleBrain:
 
         if dest != here:
             run_tool(world, name, "move", {"destination": dest})
+        elif here == v["workplace"] and plan == "仕事場" and not v["produce"]:
+            run_tool(world, name, "do", {"activity": random.choice(CHORES)})  # 品物を作らない人は家のことをする
         elif here == dest and plan == "仕事場" and here in HELP_JOBS and here != v["workplace"] and v["energy"] > 2:
             run_tool(world, name, "work", {})  # 手伝い仕事
         elif here == v["workplace"] and plan in ("仕事場", v["workplace"]) and v["energy"] > 2 and not lacking:
