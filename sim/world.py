@@ -191,10 +191,14 @@ class World:
         v = self.villagers[name]
         return v.get("to_order") and v["location"] == v["workplace"]
 
+    def _pot(self, shop):
+        """鍋の中身。new は今日作った分、old は昨日作った分（1 日は取り置きできる）。"""
+        return self.data.setdefault("pots", {}).setdefault(shop, {"old": 0, "new": 0})
+
     def servable(self, name):
         """いま出せる料理の数。鍋に残っている分と、棚の材料で作れる分。"""
         shop = self.villagers[name]["workplace"]
-        pot = self.data.setdefault("pots", {}).get(shop, 0)
+        pot = self._pot(shop)["old"] + self._pot(shop)["new"]
         box = self.data["stores"].get(shop, {})
         recipe = self.recipes(name)[-1]
         batches = min((sum(box.get(i, 0) for i in self._members(need)) // n) for need, n in recipe["needs"].items())
@@ -203,18 +207,21 @@ class World:
     def serve(self, name, n):
         """注文を受けて料理を出す。鍋が空なら、棚の材料で一鍋作る（材料と薪を使う）。"""
         shop = self.villagers[name]["workplace"]
-        pots = self.data.setdefault("pots", {})
+        pot = self._pot(shop)
         recipe = self.recipes(name)[-1]
-        while pots.get(shop, 0) < n and not self._missing(name, recipe["needs"]):
+        while pot["old"] + pot["new"] < n and not self._missing(name, recipe["needs"]):
             for need, k in recipe["needs"].items():
                 for _ in range(k):
                     item = max(self._members(need), key=lambda i: self.data["stores"][shop].get(i, 0))
                     self.data["stores"][shop][item] -= 1
             made = sum(recipe["produce"].values())
-            pots[shop] = pots.get(shop, 0) + made
+            pot["new"] += made
             self.log(f"🍲 **{name}** 注文を受けて一鍋作った（料理×{made}）")
-        served = min(n, pots.get(shop, 0))
-        pots[shop] = pots.get(shop, 0) - served
+        served = 0
+        for key in ("old", "new"):  # 昨日の分から先に出す
+            k = min(n - served, pot[key])
+            pot[key] -= k
+            served += k
         return served
 
     def take(self, name, item, n=1):
@@ -289,10 +296,10 @@ class World:
                 asked = self.sold_today(shop) + self.data.setdefault("missed", {}).get(shop, 0)
                 self.data["demand"][shop] = max(3, round((demand + asked) / 2 + 0.49))
                 self.data["missed"][shop] = 0
-                left = self.data.setdefault("pots", {}).get(shop, 0)
-                if left:
-                    self.log(f"🍲 {shop}の鍋に残った料理×{left}を片づけた")
-                self.data["pots"][shop] = 0
+                pot = self._pot(shop)
+                if pot["old"]:
+                    self.log(f"🍲 {shop}の鍋に昨日から残った料理×{pot['old']}を片づけた")
+                pot["old"], pot["new"] = pot["new"], 0  # 今日の残りは明日まで取り置く
                 continue
             left = self.shelf_goods(shop)
             if left == 0:
