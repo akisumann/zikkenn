@@ -465,7 +465,9 @@ class RuleBrain:
         if world.inputs(name):  # 店の主人は店にいる（作るかどうかは売れ行き次第）
             v["today_job"] = [world.data["day"], job]
             return job
-        over = [i for i in world.outputs(name) if world.surplus(name, i) >= RESERVE.get(i, 99)]
+        # 売れ残り：生の品だけでなく、自分で作った干物・燻製も（家の蔵の分も含めて）
+        unsold = {i: world.surplus(name, i) + world.home_stock(name, i) for i in world.made_goods(name)}
+        over = [i for i, n in unsold.items() if n >= RESERVE.get(i, 99)]
         if over:
             news = world.recent_news(name)
             short = [place for place, out in HELP_JOBS.items()
@@ -474,16 +476,16 @@ class RuleBrain:
             if short:
                 job = short[0]
                 world.log(f"🗓 **{name}** は今日は{job}を手伝うことにした（{'・'.join(over)}が余っているので）")
-            elif self.preserve_plan(world, name):
+            elif self.preserve_plan(world, name) and not any(i not in world.outputs(name) for i in over):
                 item = self.preserve_plan(world, name)
                 rule = PRESERVE[item]
                 job = v["home"] if rule["place"] == "家" else rule["place"]
                 world.log(f"🗓 **{name}** は{item}が余っているので、今日は保存食を作ることにした")
                 v["today_job"] = [world.data["day"], job, item]
                 return job
-            elif any(world.surplus(name, i) >= RESERVE[i] * 2 for i in over):
+            elif any(i not in world.outputs(name) or unsold[i] >= RESERVE[i] * 2 for i in over):
                 job = "広場"
-                world.log(f"🗓 **{name}** は{'・'.join(over)}が余りすぎているので、今日は仕事を休んだ")
+                world.log(f"🗓 **{name}** は{'・'.join(over)}が売れ残っているので、今日は仕事を休んだ")
         v["today_job"] = [world.data["day"], job]
         return job
 
@@ -495,7 +497,8 @@ class RuleBrain:
                 continue
             enough = all((world.household_stock(name, n) if n == "薪" else world.has(name, n)) >= k
                          for n, k in rule["needs"].items())
-            if enough and world.surplus(name, rule["from"]) >= 2:
+            piled = world.surplus(name, make) + world.home_stock(name, make) >= RESERVE.get(make, 99)
+            if enough and world.surplus(name, rule["from"]) >= 2 and not piled:  # 売れ残っていれば作らない
                 return make
         return None
 

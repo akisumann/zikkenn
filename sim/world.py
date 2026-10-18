@@ -49,7 +49,8 @@ ASSEMBLY_PLACE = "広場"  # 毎朝 6 時、全員がここに集まって朝礼
 NEWS_DAYS = 2  # 聞いた村の様子を当てにする日数
 SAY_STATE = {"不足": "足りない", "余り": "余っている"}
 FAMILY_KEEP = {"食材": 2}  # 家に持ち帰ったとき、煮炊き用に蔵へ入れる食材の数（残りは売り物として持っておく）
-DEFAULT_DEMAND = 6  # 店がまだ売れ行きを知らないときの、1 日に売れる見込み
+DEFAULT_DEMAND = 6
+SHOP_BUFFER = 4  # 酒場が蓄えておく、傷まない食材（燻製・干物・麦）それぞれの数  # 店がまだ売れ行きを知らないときの、1 日に売れる見込み
 KEEP = {"料理": 2, "サンドイッチ": 2, "パン": 2, "燻製魚": 1, "燻製肉": 1, "干物": 1, "麦": 1, "魚": 1, "肉": 1, "薪": 1}  # 自分用に残す数。超えた分なら売る
 WEATHERS = [("晴れ", 5), ("曇り", 3), ("雨", 2), ("霧", 1), ("嵐", 0.5)]
 MAX_MEMORIES = 40
@@ -249,9 +250,9 @@ class World:
                 move = n
             elif item == "薪":
                 move = max(0, min(n, WOOD_STORE - box.get("薪", 0)))
-            elif item in INGREDIENTS and item not in self.outputs(name):
+            elif item in INGREDIENTS and item not in self.made_goods(name):
                 move = n  # 買ってきた食材は家で使う
-            elif item in INGREDIENTS:
+            elif item in INGREDIENTS:  # 自分で獲った・作った品は、家に少し置いて残りは売り物として持っておく
                 move = max(0, min(n, FAMILY_KEEP["食材"] - box.get(item, 0)))
             else:
                 move = 0
@@ -629,6 +630,11 @@ class World:
     def outputs(self, name):
         return [item for r in self.recipes(name) for item in r["produce"]]
 
+    def made_goods(self, name):
+        """name が売り物にする品：仕事で作るものと、それを干物・燻製にしたもの。"""
+        outs = self.outputs(name)
+        return outs + [make for make, rule in PRESERVE.items() if rule["from"] in outs]
+
     def inputs(self, name):
         """仕事の材料と、1 回に要る最大の数。"""
         needs = {}
@@ -663,6 +669,8 @@ class World:
         carried = self.villagers[name]["inventory"].get(item, 0)
         if item in self.outputs(name) and self.at_order_shop(name):
             return self.servable(name)
+        if item in self.made_goods(name) and item not in self.outputs(name):
+            return carried  # 自分で作った干物・燻製は持っている分すべて売り物
         if item in self.outputs(name):
             box = self.store_at(name)
             shelf = box.get(item, 0) if box is not None and self.shop_owner(self.villagers[name]["location"]) == name else 0
@@ -696,6 +704,8 @@ class World:
             reserve = 0 if item == "薪" else self.price("薪") * 2
             if v["money"] - price < reserve:
                 return False
+            if v.get("to_order") and item != "薪" and item not in SPOIL:  # 傷まない食材は少し蓄えておく
+                return box.get(item, 0) + v["inventory"].get(item, 0) < SHOP_BUFFER
             for need, n in self.inputs(buyer).items():
                 members = self._members(need)
                 if item in members:
