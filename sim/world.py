@@ -833,8 +833,11 @@ class World:
         if self.shop_owner(shop) == seller and item in self.outputs(seller):
             self.record_sale(shop, n)
         orders = self.data["orders"].get(self.villagers[buyer]["workplace"], {})
-        if self.uses(buyer, item) and orders.get(item, 0) > 0:
-            orders[item] = max(0, orders[item] - n)
+        if self.uses(buyer, item):
+            for key in list(orders):  # 注文（品物か分類）のうち、この品が当てはまるものを減らす
+                if item in self._members(key) and orders[key] > 0:
+                    orders[key] = max(0, orders[key] - n)
+                    break
 
     def act_rest(self, name):
         v = self.villagers[name]
@@ -961,22 +964,18 @@ class World:
                 recipe = self.recipes(name)[-1]
                 per_batch = sum(recipe["produce"].values())
                 batches = max(0, -(-(self.expected_demand(shop) - self.shelf_goods(shop)) // per_batch))
-                order = {}
+                order = {}  # 注文は「魚類」「食材」のように、どれでもいい材料は分類のまま出す
                 for need, n in recipe["needs"].items():
-                    items = self._members(need)
-                    short = n * batches - sum(box.get(i, 0) for i in items)
+                    short = n * batches - sum(box.get(i, 0) for i in self._members(need))
                     if short > 0:
-                        for i in items:  # 「食材」のようにどれでもいい材料は、手に入りやすい順に頼む
-                            order[i] = order.get(i, 0) + short / len(items)
-                for r in self.recipes(name)[:-1]:  # サンドイッチの具（肉・魚）を半分ずつ頼む
+                        order[need] = order.get(need, 0) + short
+                for r in self.recipes(name)[:-1]:  # サンドイッチの具（肉類・魚類）を半分ずつ頼む
                     for need in r["needs"]:
                         if need in ("魚類", "肉類"):
-                            raw = self._members(need)[0]
                             have_now = sum(box.get(i, 0) for i in self._members(need))
                             want_n = -(-batches // 2)
                             if want_n > have_now:
-                                order[raw] = order.get(raw, 0) + want_n - have_now
-                order = {i: round(q + 0.49) for i, q in order.items() if round(q + 0.49) > 0}
+                                order[need] = order.get(need, 0) + want_n - have_now
                 orders[shop] = order
                 for i, q in order.items():
                     want[i] = want.get(i, 0) + q
@@ -996,8 +995,11 @@ class World:
             member = next(n for n, v in self.villagers.items() if v["home"] == home)
             if self.household_stock(member, "薪") < NIGHT_WOOD:
                 want["薪"] = want.get("薪", 0) + NIGHT_WOOD
-        short = [i for i in PRICES if want.get(i, 0) > have.get(i, 0)]
-        extra = [i for i in PRICES if i not in short and have.get(i, 0) >= RESERVE.get(i, 99) and not want.get(i)]
+        def have_of(key):  # 分類なら、その中のどれでも
+            return sum(have.get(i, 0) for i in self._members(key))
+        short = [k for k in want if want[k] > have_of(k)]
+        extra = [i for i in PRICES if i not in short and have.get(i, 0) >= RESERVE.get(i, 99)
+                 and not any(want.get(k) and i in self._members(k) for k in want)]
         for name in self.villagers:
             for item in short:
                 self.note(name, item, "不足", "朝礼で聞いた")

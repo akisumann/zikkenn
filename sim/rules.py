@@ -172,7 +172,8 @@ class RuleBrain:
         for need, n in world.inputs(name).items():
             items = CATEGORIES.get(need, [need])
             if sum(world.has(name, i) for i in items) >= n * 2 and not any(
-                    world.data.get("orders", {}).get(v["workplace"], {}).get(i, 0) for i in items):
+                    q for key, q in world.data.get("orders", {}).get(v["workplace"], {}).items()
+                    if any(i in CATEGORIES.get(key, [key]) for i in items)):
                 continue
             for seller in others:
                 for item in items:
@@ -364,8 +365,10 @@ class RuleBrain:
             owner = world.shop_owner(shop)
             if owner == name or world.villagers[owner]["location"] != shop:  # 主人が店にいなければ行かない
                 continue
-            if any(q > 0 and world.surplus(name, i) > 0 and world.will_buy(owner, i) for i, q in order.items()):
-                return shop
+            for key, q in order.items():  # 注文が「魚類」なら、生の魚・燻製魚・干物のどれでも持っていく
+                if q > 0 and any(world.surplus(name, i) > 0 and world.will_buy(owner, i)
+                                 for i in CATEGORIES.get(key, [key])):
+                    return shop
         return None
 
     def market_trip(self, world, name, minimum=2):
@@ -503,7 +506,8 @@ class RuleBrain:
             news = world.recent_news(name)
             short = [place for place, out in HELP_JOBS.items()
                      if not any(i in world.outputs(name) for i in out)
-                     and any(news.get(i, [None])[0] == "不足" for i in out)]
+                     and any(news.get(k, [None])[0] == "不足" for k in news for i in out
+                             if i in CATEGORIES.get(k, [k]))]
             if short:
                 job = short[0]
                 world.log(f"🗓 **{name}** は今日は{job}を手伝うことにした（{'・'.join(over)}が余っているので）")
