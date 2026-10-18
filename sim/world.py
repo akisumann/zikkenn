@@ -14,10 +14,18 @@ STATE_PATH = ROOT / "world" / "state.json"
 CHRONICLE_DIR = ROOT / "chronicle"
 
 DAY_HOURS = [6, 8, 10, 12, 14, 16, 18, 20]  # 1 ティック = 2 時間。22 時〜翌 6 時は全員眠る
-FOOD = {"シチュー": 5, "パン": 4, "肉": 4, "魚": 3, "野菜": 2, "山菜": 2}  # 食べると減る空腹度
-PRICES = {"シチュー": 3, "パン": 2, "肉": 3, "魚": 3, "野菜": 1, "山菜": 1, "薬草": 3, "エール": 2, "薪": 1}  # 村の相場（銀貨）
-TONICS = {"薬草": 3, "エール": 1}  # 口にすると元気が戻るもの
-KEEP_FOOD = 2  # 自分用に残しておく食べ物の数。これを超えた分なら売ってもいい
+# 村の需要は「食べる」と「暖を取る」の二つだけ。品物はすべてそこから逆算する（README の「経済の設計」）。
+#   食材（麦・魚・肉）─┐
+#                       ├→ 加工（パン屋・酒場の台所）→ 食事（パン・料理）
+#   薪 ────────────────┤
+#                       └→ 夜の暖（一家に 1 本）
+MEALS = {"料理": 5, "パン": 3}           # ちゃんとした食事。食べると減る空腹度
+INGREDIENTS = {"麦": 1, "魚": 1, "肉": 1}  # 食材。生でもかじれるが腹はふくれない
+FOOD = {**MEALS, **INGREDIENTS}
+CATEGORIES = {"食材": list(INGREDIENTS)}  # 仕事の材料に「どれでもいい」を指定するための分類
+PRICES = {"料理": 4, "パン": 2, "麦": 2, "魚": 3, "肉": 3, "薪": 2}  # 村の相場（銀貨）
+HELP_JOBS = {"畑": {"麦": 1}, "川辺": {"魚": 1}, "森の入口": {"薪": 1}}  # 誰でもできる手伝い仕事（本業より実入りは少ない）
+KEEP = {"料理": 2, "パン": 2, "麦": 1, "魚": 1, "肉": 1, "薪": 1}  # 自分用に残す数。超えた分なら売る
 WEATHERS = [("晴れ", 5), ("曇り", 3), ("雨", 2), ("霧", 1), ("嵐", 0.5)]
 MAX_MEMORIES = 40
 MAX_INBOX = 30
@@ -79,6 +87,9 @@ class World:
     def clock(self):
         return f"{self.data['day']}日目 {self.hour:02d}:00"
 
+    def price(self, item):
+        return PRICES.get(item)
+
     def people_at(self, place, exclude=None):
         return [n for n, v in self.villagers.items() if v["location"] == place and n != exclude]
 
@@ -126,6 +137,7 @@ class World:
                      + ("（くたくただ）" if v["energy"] <= 2 else ""))
         inv = "、".join(f"{k}×{n}" for k, n in v["inventory"].items() if n > 0) or "なし"
         lines.append(f"【持ち物】{inv}、銀貨 {v['money']} 枚")
+        lines.append(f"【村の相場】{self.price_list()}")
         lines.append("【前の行動から今までに見聞きしたこと】")
         lines += [f"- {e['t']}" for e in v["inbox"]] or ["- 特になし"]
         lines.append("【あなたの記憶メモ（古い順）】")
@@ -168,23 +180,24 @@ class World:
 
     def act_work(self, name):
         v = self.villagers[name]
-        if v["location"] != v["workplace"]:
-            return f"仕事は{v['workplace']}でしかできない。"
         if v["energy"] <= 1:
             return "疲れすぎて働けない。"
-        lacking = [i for i, n in v.get("needs", {}).items() if v["inventory"].get(i, 0) < n]
+        if v["location"] != v["workplace"]:
+            if v["location"] not in HELP_JOBS:
+                return f"仕事は{v['workplace']}でしかできない（手伝いなら{'・'.join(HELP_JOBS)}でできる）。"
+            return self._help(name)
+        lacking = self.lacking(name)
         if lacking:
             return f"仕事に使う{'、'.join(lacking)}が足りない。"
-        for i, n in v.get("needs", {}).items():
-            v["inventory"][i] -= n
+        for need, n in v.get("needs", {}).items():
+            for _ in range(n):
+                item = max(self._members(need), key=lambda i: v["inventory"].get(i, 0))
+                v["inventory"][item] -= 1
         gained = []
         for item, n in v["produce"].items():
             if self.data["weather"] in ("雨", "嵐") and v["workplace"] in ("畑", "川辺", "森の入口"):
                 n = max(1, n // 2)
-            if item == "銀貨":
-                v["money"] += n
-            else:
-                v["inventory"][item] = v["inventory"].get(item, 0) + n
+            v["inventory"][item] = v["inventory"].get(item, 0) + n
             gained.append(f"{item}×{n}")
         v["energy"] = max(0, v["energy"] - 1)
         v["activity"] = f"{v['job']}の仕事をしている"
@@ -192,14 +205,28 @@ class World:
         self.log(f"🔨 **{name}** 働いた（{'、'.join(gained)}）")
         return f"働いて {'、'.join(gained)} を得た。"
 
+    def _help(self, name):
+        v = self.villagers[name]
+        place = v["location"]
+        gained = []
+        for item, n in HELP_JOBS[place].items():
+            v["inventory"][item] = v["inventory"].get(item, 0) + n
+            gained.append(f"{item}×{n}")
+        v["energy"] = max(0, v["energy"] - 1)
+        v["activity"] = f"{place}で手伝い仕事をしている"
+        self.broadcast(place, f"{name}が手伝い仕事をしている。", exclude=name)
+        self.log(f"🤝 **{name}** {place}で手伝った（{'、'.join(gained)}）")
+        return f"手伝って {'、'.join(gained)} を得た。"
+
+    def price_list(self):
+        return "、".join(f"{k} {p}枚" for k, p in PRICES.items())
+
+    def stock(self, item):
+        """村じゅうにある item の数。"""
+        return sum(v["inventory"].get(item, 0) for v in self.villagers.values())
+
     def act_eat(self, name, item):
         v = self.villagers[name]
-        if item in TONICS and v["inventory"].get(item, 0) > 0:
-            v["inventory"][item] -= 1
-            v["energy"] = min(10, v["energy"] + TONICS[item])
-            v["activity"] = f"{item}を口にしている"
-            self.log(f"🌿 **{name}** {item}を口にした")
-            return f"{item}を口にした。元気 {v['energy']}/10。"
         if item not in FOOD:
             return f"{item}は食べられない。食べられるもの: " + "、".join(FOOD)
         if v["inventory"].get(item, 0) <= 0:
@@ -234,10 +261,24 @@ class World:
         self.log(f"🎁 **{name}** → {to}：{item}×{amount}")
         return f"{to}に{item}を{amount}つ渡した。"
 
+    def _members(self, need):
+        return CATEGORIES.get(need, [need])
+
+    def lacking(self, name):
+        """仕事の材料で足りないもの（分類名のまま返す）。"""
+        v = self.villagers[name]
+        return [need for need, n in v.get("needs", {}).items()
+                if sum(v["inventory"].get(i, 0) for i in self._members(need)) < n]
+
+    def uses(self, name, item):
+        """item が name の仕事の材料かどうか。"""
+        return any(item in self._members(need) for need in self.villagers[name].get("needs", {}))
+
     def surplus(self, name, item):
-        """name が売ってもいい item の数。"""
-        have = self.villagers[name]["inventory"].get(item, 0)
-        return have - KEEP_FOOD if item in FOOD else have
+        """name が売ってもいい item の数。仕事の材料は売らない。"""
+        if self.uses(name, item):
+            return 0
+        return self.villagers[name]["inventory"].get(item, 0) - KEEP.get(item, 0)
 
     def will_sell(self, seller, buyer, item):
         """村の決まり：余っていて、相手をひどく嫌っていなければ、相場で売る。"""
@@ -245,33 +286,32 @@ class World:
         return self.surplus(seller, item) > 0 and imp >= -2
 
     def will_buy(self, buyer, item):
-        """村の決まり：食費（銀貨 4 枚）を残して払えて、手元に少ないなら買う。"""
+        """村の決まり：要るものを、払える範囲で買う。
+        仕事の材料は 4 つまで仕入れる。薪は夜の分を 2 本まで。食事は空腹なら 2 つまで。"""
         v = self.villagers[buyer]
-        if item == "エール":  # エールは日暮れの酒場で、懐に余裕があれば何杯でも
-            return v["location"] == "酒場" and self.hour >= 16 and v["money"] >= 4
-        return v["money"] - PRICES.get(item, 99) >= 4 and v["inventory"].get(item, 0) < 2
+        have, price = v["inventory"].get(item, 0), self.price(item) or 99
+        if self.uses(buyer, item):
+            return v["money"] >= price and have < 4
+        if item == "薪":
+            return v["money"] - price >= 3 and have < 2
+        if item in MEALS:
+            return v["money"] >= price and have < 2 and v["hunger"] >= 3
+        return False
 
     def act_sell(self, name, buyer, item):
         v = self.villagers[name]
         if buyer not in self.people_at(v["location"], exclude=name):
             return f"{buyer}はここにいない。"
-        if item not in PRICES or v["inventory"].get(item, 0) <= 0:
+        if not self.price(item) or v["inventory"].get(item, 0) <= 0:
             return f"{item}を持っていない。"
         if not self.will_buy(buyer, item):
             v["activity"] = f"{buyer}に{item}を売り込んでいる"
             self.log(f"🙅 **{buyer}** は **{name}** の{item}を買わなかった")
             return f"{buyer}には要らないと言われた。"
-        price = PRICES[item]
+        price = self.price(item)
         v["inventory"][item] -= 1
         v["money"] += price
         self.villagers[buyer]["money"] -= price
-        if item == "エール":
-            b = self.villagers[buyer]
-            b["energy"] = min(10, b["energy"] + TONICS["エール"])
-            self.broadcast(v["location"], f"{name}が{buyer}にエールを注ぎ、{buyer}が飲み干した。", exclude=name,
-                           kind="trade", actor=name, to=buyer, quote=item)
-            self.log(f"🍺 **{name}** が **{buyer}** にエールを注いだ（銀貨{price}枚）")
-            return f"{buyer}にエールを売った。"
         inv = self.villagers[buyer]["inventory"]
         inv[item] = inv.get(item, 0) + 1
         v["activity"] = f"{buyer}に{item}を売っている"
@@ -284,10 +324,10 @@ class World:
         v = self.villagers[name]
         if seller not in self.people_at(v["location"], exclude=name):
             return f"{seller}はここにいない。"
-        if item not in PRICES:
-            return f"{item}は売り買いできない。相場: " + "、".join(f"{k} {p}枚" for k, p in PRICES.items())
+        if not self.price(item):
+            return f"{item}は売り買いできない。相場: " + self.price_list()
         amount = max(1, amount)
-        price = PRICES[item] * amount
+        price = self.price(item) * amount
         if v["money"] < price:
             return f"銀貨が足りない（{price} 枚必要、手持ち {v['money']} 枚）。"
         if not self.will_sell(seller, name, item) or self.surplus(seller, item) < amount:
@@ -299,12 +339,6 @@ class World:
         v["money"] -= price
         self.villagers[seller]["money"] += price
         self.villagers[seller]["inventory"][item] -= amount
-        if item == "エール":  # エールはその場で飲む
-            v["energy"] = min(10, v["energy"] + TONICS["エール"] * amount)
-            self.broadcast(v["location"], f"{name}が{seller}からエールを買って飲み干した。", exclude=name,
-                           kind="trade", actor=name, to=seller, quote=item)
-            self.log(f"🍺 **{name}** は **{seller}** からエールを買って飲み干した")
-            return f"{seller}からエールを買って飲み干した。"
         v["inventory"][item] = v["inventory"].get(item, 0) + amount
         v["activity"] = f"{seller}から{item}を買っている"
         self.broadcast(v["location"], f"{name}が{seller}から{item}を{amount}つ買った。", exclude=name,
@@ -366,18 +400,26 @@ class World:
             return False
         # 夜：全員家に帰って眠る
         self.log("🌙 夜が来た。村人たちはそれぞれの家で眠りについた。")
+        homes = {}
         for name, v in self.villagers.items():
-            v["location"] = v["home"]
-            v["hunger"] = min(10, v["hunger"] + 1)
-            v["activity"] = "目を覚ましたところ"
-            if v["inventory"].get("薪", 0) > 0:  # 薪があれば暖かく眠れる
-                v["inventory"]["薪"] -= 1
-                v["energy"] = 10
-                night = "夜のあいだ、薪を燃やして暖かく眠った。"
+            homes.setdefault(v["home"], []).append(name)
+        for home, family in homes.items():
+            # 一家で薪を 1 本燃やせば、全員が暖かく眠れる。いちばん多く持っている人が出す
+            giver = max(family, key=lambda n: self.villagers[n]["inventory"].get("薪", 0))
+            warm = self.villagers[giver]["inventory"].get("薪", 0) > 0
+            if warm:
+                self.villagers[giver]["inventory"]["薪"] -= 1
             else:
-                v["energy"] = 8
-                night = "薪がなく、夜の冷え込みであまり眠れなかった。"
-            v["inbox"].append({"t": night, "kind": "sleep", "actor": None, "to": None, "quote": None})
+                self.log(f"🥶 {home}には薪がなく、寒い夜になった")
+            for name in family:
+                v = self.villagers[name]
+                v["location"] = home
+                v["hunger"] = min(10, v["hunger"] + 1)
+                v["energy"] = 10 if warm else 7
+                v["activity"] = "目を覚ましたところ"
+                night = ("夜のあいだ、薪を燃やして暖かく眠った。" if warm
+                         else "薪がなく、夜の冷え込みであまり眠れなかった。")
+                v["inbox"].append({"t": night, "kind": "sleep", "actor": None, "to": None, "quote": None})
         self.data["day"] += 1
         self.data["hour_index"] = 0
         self.data["weather"] = random.choices([w for w, _ in WEATHERS], [p for _, p in WEATHERS])[0]

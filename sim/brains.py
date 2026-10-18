@@ -6,7 +6,6 @@
 
 import os
 
-from .world import PRICES
 
 MODEL = os.environ.get("VILLAGE_MODEL", "claude-opus-5-5")
 EFFORT = os.environ.get("VILLAGE_EFFORT", "low")
@@ -30,7 +29,7 @@ def _tool(name, description, properties):
 S = {"type": "string"}
 I = {"type": "integer"}
 
-# この時間の行動を決めるツール。どれか 1 つを使うとターンが終わる。
+# この 2 時間の過ごし方を決めるツール。どれか 1 つを使うとターンが終わる。
 ACTION_TOOLS = [
     _tool("move", "別の場所へ移動する。", {"destination": {**S, "description": "村の場所の名前"}}),
     _tool("say", "その場にいる人に話しかける。その場の全員に聞こえる。", {
@@ -38,21 +37,25 @@ ACTION_TOOLS = [
         "message": {**S, "description": "口に出すセリフ（あなたらしい口調で、1〜3 文）"},
     }),
     _tool("work", "自分の仕事場で仕事をする。生産物が手に入るが疲れる。", {}),
-    _tool("eat", "持っている食べ物や薬草を 1 つ口にする。", {"item": {**S, "description": "シチュー・パン・肉・魚・野菜・山菜（空腹が減る）、薬草（元気が戻る）"}}),
-    _tool("give", "その場にいる人に物や銀貨を渡す。取引や贈り物に使う。", {
-        "to": S, "item": {**S, "description": "持ち物の名前、または「銀貨」"}, "amount": I,
-    }),
-    _tool("buy", "その場にいる人から、村の相場で物を買う。相手に余りがなければ断られる。", {
-        "seller": S, "item": {**S, "description": "シチュー・パン・肉・魚・野菜・山菜・薬草・エール・薪"}, "amount": I,
-    }),
-    _tool("sell", "その場にいる人に、持ち物を 1 つ村の相場で売り込む。要らなければ断られる。", {
-        "buyer": S, "item": S,
-    }),
     _tool("rest", "その場で休んで元気を回復する。", {}),
     _tool("do", "上のどれにも当てはまらないことをする（散歩、歌う、考え込む、掃除する、など）。", {
         "activity": {**S, "description": "何をしているかの描写（例：「井戸のそばで空を見上げている」）"},
     }),
 ]
+# ついでにできる小さな用事。2 時間を使わず、1 回のターンで QUICK_LIMIT 回まで使える。
+QUICK_TOOLS = [
+    _tool("eat", "持っている食べ物を 1 つ食べる。", {"item": {**S, "description": "料理・パン（空腹がよく減る）。麦・魚・肉は生でかじれるが、腹はほとんどふくれない"}}),
+    _tool("give", "その場にいる人に物や銀貨を渡す。取引や贈り物に使う。", {
+        "to": S, "item": {**S, "description": "持ち物の名前、または「銀貨」"}, "amount": I,
+    }),
+    _tool("buy", "その場にいる人から、村の相場で物を買う。相手に余りがなければ断られる。", {
+        "seller": S, "item": {**S, "description": "料理・パン・麦・魚・肉・薪"}, "amount": I,
+    }),
+    _tool("sell", "その場にいる人に、持ち物を 1 つ村の相場で売り込む。要らなければ断られる。", {
+        "buyer": S, "item": S,
+    }),
+]
+QUICK_LIMIT = 3
 # 心の中の動き。ターンを消費しないので、行動の前に何度か使える。
 INNER_TOOLS = [
     _tool("remember", "覚えておきたいことを記憶メモに書く。明日以降も読み返せるのはこのメモだけ。", {
@@ -64,8 +67,9 @@ INNER_TOOLS = [
         "note": {**S, "description": "その人をいまどう思っているか"},
     }),
 ]
-TOOLS = ACTION_TOOLS + INNER_TOOLS
+TOOLS = ACTION_TOOLS + QUICK_TOOLS + INNER_TOOLS
 ACTION_NAMES = {t["name"] for t in ACTION_TOOLS}
+QUICK_NAMES = {t["name"] for t in QUICK_TOOLS}
 
 
 def run_tool(world, name, tool, args):
@@ -121,10 +125,11 @@ def system_prompt(world, name):
 
 ## この世界での過ごし方
 これはシミュレーションです。2 時間ごとに、あなたは「いまの状況」を受け取り、次の 2 時間に何をするかをツールで決めます。
-- 行動ツール（move / say / work / eat / give / buy / sell / rest / do）は 1 回につき 1 つだけ使えます。使った時点でこの 2 時間は終わります。
+- 行動ツール（move / say / work / rest / do）は 1 回につき 1 つだけ使えます。使った時点でこの 2 時間は終わります。
+- 小さな用事（eat / give / buy / sell）は 2 時間を使わず、行動の前に {QUICK_LIMIT} つまでできます。
 - remember と update_impression は心の中の動きなので、行動の前に何度でも使えます。大事な出来事や秘密、約束は remember に残してください。あなたが明日以降に思い出せるのは、記憶メモだけです。
-- 空腹が 10 に近づくとつらくなります。食べ物は自分で作るか、人から買うか、分けてもらいます。村の相場は {"、".join(f"{k} {p}枚" for k, p in PRICES.items())}。値引きや物々交換は話し合いと give で行ってください。
-- 夜 22 時になると、全員が自動で家に帰って眠ります。薪を 1 本燃やせば暖かくよく眠れますが、なければ冷えてあまり疲れが取れません。
+- 空腹が 10 に近づくとつらくなります。ちゃんとした食事はパン屋のパンと酒場の料理で、麦・魚・肉・薪を材料に作られます。食べ物は自分で作るか、人から買うか、分けてもらいます。村の相場は状況欄に出ます。値引きや物々交換は話し合いと give で行ってください。
+- 夜 22 時になると、全員が自動で家に帰って眠ります。一家で薪を 1 本燃やせば暖かくよく眠れますが、なければ冷えてあまり疲れが取れません。
 
 ## 心がけ
 - {name}として、その性格と願いのとおりに、自分で考えて動いてください。物語の都合や、誰かを喜ばせることより、{name}らしさを優先します。
@@ -145,6 +150,7 @@ class ClaudeBrain:
     def take_turn(self, world, name):
         messages = [{"role": "user", "content": world.perceive(name)}]
         system = system_prompt(world, name)
+        quick_used = 0
         for _ in range(MAX_STEPS):
             response = self.client.beta.messages.create(
                 model=MODEL,
@@ -170,7 +176,10 @@ class ClaudeBrain:
             for block in tool_uses:
                 if block.name in ACTION_NAMES and acted:
                     text = "この 2 時間はもう別の行動をした。"
+                elif block.name in QUICK_NAMES and quick_used >= QUICK_LIMIT:
+                    text = f"小さな用事は 1 回に {QUICK_LIMIT} つまで。あとは行動を 1 つ選ぶこと。"
                 else:
+                    quick_used += block.name in QUICK_NAMES
                     text = run_tool(world, name, block.name, block.input)
                     acted = acted or block.name in ACTION_NAMES
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": text})
