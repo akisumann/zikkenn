@@ -13,66 +13,79 @@ SEED_PATH = ROOT / "seed" / "village.json"
 STATE_PATH = ROOT / "world" / "state.json"
 CHRONICLE_DIR = ROOT / "chronicle"
 
+# ルールの全体像は RULES.md。定数はその章立てに合わせて並べてある。
+
+# ---------- 1. 時間 ----------
 DAY_HOURS = [6, 8, 10, 12, 14, 16, 18, 20]  # 1 ティック = 2 時間。22 時〜翌 6 時は全員眠る
 TURN_MINUTES = 120   # 1 ティックの持ち時間
 MOVE_MINUTES = 20    # 村の中の移動は、どこへでも 20 分
 MAX_MOVES = 3        # 1 ティックに歩ける回数（それ以上は何もする時間がない）
-# 村の需要は「食べる」と「暖を取る」の二つだけ。品物はすべてそこから逆算する（README の「経済の設計」）。
+WEATHERS = [("晴れ", 5), ("曇り", 3), ("雨", 2), ("霧", 1), ("嵐", 0.5)]
+
+# ---------- 2. 体と暮らし ----------
+# 村の需要は「食べる」と「暖を取る」と、不測の事態への備え。品物はすべてそこから逆算する。
 #   食材（麦・魚・肉）─┐
 #                       ├→ 加工（酒場の台所：朝昼はミツのパン、夜はロクの料理）→ 食事（パン・料理）
 #   薪 ────────────────┤
-#                       └→ 夜の暖（一家に 1 本）
+#                       └→ 夜の暖（一家に 10 本）
+NIGHT_WOOD = 10  # 一家が一晩暖かく眠るのに燃やす薪
+OUTDOOR = ("畑", "川辺", "森の入口")              # 外の仕事場。不測の事態が起きやすく、雨・嵐の日は実入りが減る
+INJURY = {"外": 0.03, "猟": 0.05, "内": 0.01}   # 仕事 1 回ごとに怪我をする確率（猟は獣を相手にする猟師）
+INJURY_DAYS = 4                                  # 薬草がなければ、怪我が自然に治るまでの日数。怪我の間は実入りが半分
+TOOL_BREAK = {"外": 0.02, "内": 0.01}            # 本業の仕事 1 回ごとに道具が壊れる確率。壊れたら買い替えるまで本業ができない
+FRAY = {"外": 0.05, "内": 0.02}                  # 毎晩、服がほつれる確率（外で働いた日は高い）。ほつれた服では夜の冷えがこたえる
+
+# ---------- 3. 品物 ----------
 MEALS = {"料理": 5, "サンドイッチ": 5, "ツナサンド": 5, "パン": 3}  # ちゃんとした食事。食べると減る空腹度
 SNACKS = {"燻製肉": 2, "干物": 2}  # 燻製・干物はそのままでも食べられるが、腹の足しは生より少しマシな程度
+FOOD = {**MEALS, **SNACKS}
 # 食材。生では食べず、家で薪を使って煮炊きする（燻製も食材として使える）
 INGREDIENTS = {"麦": "麦粥", "魚": "焼き魚", "肉": "焼き肉", "燻製肉": "燻製肉の煮込み", "干物": "干物のあぶり"}
-# 毎晩、持っている分のうちこの割合が傷んで捨てられる。麦と薪、保存食は傷まない
-SPOIL = {"料理": 0.5, "サンドイッチ": 0.5, "ツナサンド": 0.5, "魚": 0.4, "肉": 0.3, "パン": 0.2}  # 燻製・干物は傷まない
+HOME_MEAL = 4    # 家で煮炊きした食事で減る空腹度。薪 10 本で 1 人前なので、店より薪を食う
+COOK_WOOD = 10   # 家での煮炊き 1 回、店の仕事 1 回に使う薪
+WOOD_LOT = 10    # 薪を売り買いするときのひと束
+# 毎晩、持っている分のうちこの割合が傷んで捨てられる。麦と薪、保存食、町の品は傷まない
+SPOIL = {"料理": 0.5, "サンドイッチ": 0.5, "ツナサンド": 0.5, "魚": 0.4, "肉": 0.3, "パン": 0.2}
+# 仕事の材料に「どれでもいい」を指定するための分類
+CATEGORIES = {"食材": list(INGREDIENTS), "魚類": ["魚", "干物"], "肉類": ["肉", "燻製肉"]}
+PRICES = {"料理": 32, "サンドイッチ": 34, "ツナサンド": 34, "パン": 24, "燻製肉": 38, "干物": 36, "麦": 26, "魚": 30, "肉": 28, "薪": 1,
+          "薬草": 20, "服": 60, "道具": 80}  # 村の相場（銀貨）。薬草・服・道具は町の品で、雑貨商人だけが売る
+
+# ---------- 5. 残しておく量 ----------
+KEEP = {"料理": 2, "サンドイッチ": 2, "ツナサンド": 2, "パン": 2, "燻製肉": 1, "干物": 1, "麦": 1, "魚": 1, "肉": 1, "薪": 10}  # 作らない品を自分用に残す数。超えた分なら売る
+HOME_KEEP = {"食材": 2, "薪": NIGHT_WOOD * 2}  # 家の蔵に置いておく分（食材は煮炊き用、作る人の薪は二晩分）。超えた分は売り物
+WOOD_STORE = 50  # 薪は傷まないので、懐に余裕があれば一家で何晩分（10 本で一晩）か貯めておく
+SAVINGS = 100    # 不測の事態（道具の買い替え＋薬草）に備えて、各家が手を付けずに取っておく額
+SHOP_BUFFER = 4  # 酒場が蓄えておく、傷まない食材（燻製・干物・麦）それぞれの数
+SHOP_CASH = 150  # 店の財布がこれを超えていれば、材料を多めに仕入れる（料理 2 鍋分の材料費のめやす）
+SHOP_KEEP = 200  # 店じまいのとき、明日の仕入れ用に店の財布に残す額。残りの儲けは店の主人たちで折半する
+# これだけ売れ残ったら「余っている」と感じる（村で 1〜2 日分の備蓄の目安）。休む・手伝いに回る・商人に売る目安
+RESERVE = {"麦": 8, "魚": 4, "肉": 4, "薪": 80, "パン": 8, "サンドイッチ": 6, "ツナサンド": 6, "料理": 6, "燻製肉": 10, "干物": 10}
+
+# ---------- 6. 仕事 ----------
+HELP_JOBS = {"畑": {"麦": 1}, "川辺": {"魚": 1}, "森の入口": {"薪": 10}}  # 誰でもできる手伝い仕事（本業より実入りは少ない）
 # 保存食づくり：手の空いた日に時間を使って、傷む食材を長持ちする食べ物にする
 PRESERVE = {
     # 作るもの: 場所、材料、元の食材、作れない天気
     "干物": {"place": "川辺", "needs": {"魚": 2}, "from": "魚", "makes": {"干物": 2}, "weather_ng": ("雨", "嵐", "霧"), "how": "魚を開いて干した"},
     "燻製肉": {"place": "家", "needs": {"肉": 2, "薪": 10}, "from": "肉", "makes": {"燻製肉": 2}, "weather_ng": (), "how": "肉を燻した"},
 }
-# 薪の数え方：一晩の暖房、家での煮炊き 1 回、燻製 1 回、店の 1 回の仕事に、それぞれ 10 本
-NIGHT_WOOD = 10
-COOK_WOOD = 10
-WOOD_LOT = 10  # 薪を売り買いするときのひと束
-HOME_MEAL = 4  # 家で煮炊きした食事で減る空腹度。薪 10 本で 1 人前なので、店より薪を食う
-FOOD = {**MEALS, **SNACKS}
-RETAIL_MARKUP = 1.25  # 店が仕入れた食材を店先で売るときの上乗せ
-# 仕事の材料に「どれでもいい」を指定するための分類
-CATEGORIES = {"食材": list(INGREDIENTS), "魚類": ["魚", "干物"], "肉類": ["肉", "燻製肉"]}
-PRICES = {"料理": 32, "サンドイッチ": 34, "ツナサンド": 34, "パン": 24, "燻製肉": 38, "干物": 36, "麦": 26, "魚": 30, "肉": 28, "薪": 1,
-          "薬草": 20, "服": 60, "道具": 80}  # 村の相場（銀貨）。薬草・服・道具は町の品で、雑貨商人だけが売る
-# 暮らしの不測の事態。外の仕事（畑・川辺・森）ほど起きやすい
-OUTDOOR = ("畑", "川辺", "森の入口")
-INJURY = {"外": 0.03, "猟": 0.05, "内": 0.01}   # 仕事 1 回ごとに怪我をする確率（猟は獣を相手にする猟師）
-INJURY_DAYS = 4                                  # 薬草がなければ、怪我が自然に治るまでの日数。怪我の間は実入りが半分
-TOOL_BREAK = {"外": 0.02, "内": 0.01}            # 本業の仕事 1 回ごとに道具が壊れる確率。壊れたら買い替えるまで本業ができない
-FRAY = {"外": 0.05, "内": 0.02}                  # 毎晩、服がほつれる確率（外で働いた日は高い）。ほつれた服では夜の冷えがこたえる
-MEND_STEPS = 3                                   # 家で服を繕うのにかかる行動の回数（6 時間）。同じ服は MEND_LIMIT 回まで
+DEFAULT_DEMAND = 6  # 店がまだ売れ行きを知らないときの、1 日に売れる見込み
+MEND_STEPS = 3      # 家で服を繕うのにかかる行動の回数（6 時間）。同じ服は MEND_LIMIT 回まで
 MEND_LIMIT = 2
+
+# ---------- 7. 売り買い ----------
+RETAIL_MARKUP = 1.25  # 店が仕入れた食材を店先で売るときの上乗せ
 # 雑貨商人：町の品を村で売り、村でかなり余った傷まない品を安く買い取って町へ持っていく
 MERCHANT_GOODS = {"薬草": 6, "服": 4, "道具": 4}  # 町から仕入れて店に置いておく数
 EXPORTS = ("干物", "燻製肉", "麦", "薪")          # 商人が買い取るもの（町まで傷まずに運べるもの）
 EXPORT_RATE = 0.5                                 # 買い取り値は相場の半額（捨てるよりはまし、という値）
 TOWN_EVERY = 3                                    # 商人は 3 日に 1 回、丸一日町へ行く（店は閉まる）
-SAVINGS = 100  # 不測の事態（道具の買い替え＋薬草）に備えて、各家が手を付けずに取っておく額
-HELP_JOBS = {"畑": {"麦": 1}, "川辺": {"魚": 1}, "森の入口": {"薪": 10}}  # 誰でもできる手伝い仕事（本業より実入りは少ない）
-# これだけ売れ残ったら「余っている」と感じる（村で 1〜2 日分の備蓄の目安）
-RESERVE = {"麦": 8, "魚": 4, "肉": 4, "薪": 80, "パン": 8, "サンドイッチ": 6, "ツナサンド": 6, "料理": 6, "燻製肉": 10, "干物": 10}
-WOOD_STORE = 50  # 薪は傷まないので、懐に余裕があれば一家で何晩分（10 本で一晩）か貯めておく
+
+# ---------- 8. 知らせ ----------
 ASSEMBLY_PLACE = "広場"  # 毎朝 6 時、全員がここに集まって朝礼をする
-NEWS_DAYS = 2  # 聞いた村の様子を当てにする日数
+NEWS_DAYS = 2            # 聞いた村の様子を当てにする日数
 SAY_STATE = {"不足": "足りない", "余り": "余っている"}
-FAMILY_KEEP = {"食材": 2}  # 家に持ち帰ったとき、煮炊き用に蔵へ入れる食材の数（残りは売り物として持っておく）
-DEFAULT_DEMAND = 6
-SHOP_BUFFER = 4  # 酒場が蓄えておく、傷まない食材（燻製・干物・麦）それぞれの数
-SHOP_CASH = 150  # 酒場が蓄えを買い足すときに手元に残す額（料理 2 鍋分の材料費のめやす）
-SHOP_KEEP = 200  # 店じまいのとき、明日の仕入れ用に店の財布に残す額。残りの儲けは店の主人たちで折半する
-KEEP = {"料理": 2, "サンドイッチ": 2, "ツナサンド": 2, "パン": 2, "燻製肉": 1, "干物": 1, "麦": 1, "魚": 1, "肉": 1, "薪": 10}  # 自分用に残す数。超えた分なら売る
-WEATHERS = [("晴れ", 5), ("曇り", 3), ("雨", 2), ("霧", 1), ("嵐", 0.5)]
 MAX_MEMORIES = 40
 MAX_INBOX = 30
 MAX_RUMORS = 10
@@ -219,7 +232,7 @@ class World:
     def for_shop(self, buyer, item):
         """buyer が item を店の財布で買うか（店の材料。ただし家に今夜の薪がなければ、薪は家の分として買う）。"""
         return bool(self.shop_of(buyer) and self.uses(buyer, item)
-                    and not (item == "薪" and self.household_stock(buyer, "薪") < NIGHT_WOOD))
+                    and not (item == "薪" and self.needs_tonight_wood(buyer)))
 
     def from_shop(self, seller, item):
         """seller が item を店の品として売るか（売上は店の財布へ）。"""
@@ -358,7 +371,7 @@ class World:
                 continue
             if v["location"] != v["home"]:  # 自分の店
                 if item == "薪":  # 家に今夜の薪がなければ、その分は持ったままにして夜に家へ持ち帰る
-                    n -= min(n, max(0, NIGHT_WOOD - self.home_stock(name, "薪")))
+                    n -= min(n, self.home_wood_short(name))
                 if n > 0 and (self.uses(name, item) or item in self.shop_outputs(name)):
                     self._add(box, item, n); inv[item] -= n
                 continue
@@ -367,7 +380,7 @@ class World:
             elif item == "薪":
                 move = max(0, min(n, WOOD_STORE - box.get("薪", 0)))
             elif item in INGREDIENTS:  # 食材は煮炊き用に少し家に置き、残りは売り物として持っておく（本業でなくても）
-                move = max(0, min(n, FAMILY_KEEP["食材"] - box.get(item, 0)))
+                move = max(0, min(n, HOME_KEEP["食材"] - box.get(item, 0)))
             else:
                 move = 0
             if move:
@@ -386,7 +399,7 @@ class World:
                 box[meal] -= 1
                 self._add(v["inventory"], meal, 1)
         for item in self.made_goods(name):
-            keep = NIGHT_WOOD * 2 if item == "薪" else FAMILY_KEEP["食材"] if item in INGREDIENTS else None
+            keep = HOME_KEEP["薪"] if item == "薪" else HOME_KEEP["食材"] if item in INGREDIENTS else None
             if keep is None:
                 continue
             n = box.get(item, 0) - keep
@@ -983,12 +996,20 @@ class World:
             box = self.store_at(name)
             shelf = box.get(item, 0) if box is not None and self.villagers[name]["location"] != self.villagers[name]["home"] else 0
             if item == "薪":  # 薪を取る人も、家に今夜の分がなければ、その分は売らずに持ち帰る
-                carried -= min(carried, max(0, NIGHT_WOOD - self.home_stock(name, "薪")))
+                carried -= min(carried, self.home_wood_short(name))
             return carried + shelf
         return carried - KEEP.get(item, 0)
 
     def family(self, a, b):
         return self.villagers[a]["home"] == self.villagers[b]["home"]
+
+    def needs_tonight_wood(self, name):
+        """一家に今夜の薪（蔵と持ち歩きを合わせて 10 本）がないか。薪は、何より先に家の今夜の分に回す。"""
+        return self.household_stock(name, "薪") < NIGHT_WOOD
+
+    def home_wood_short(self, name):
+        """家の蔵の薪が、今夜の分にあと何本足りないか（持ち歩いている薪のうち、家へ持ち帰る分）。"""
+        return max(0, NIGHT_WOOD - self.home_stock(name, "薪"))
 
     def household_stock(self, name, item):
         """name の家の蔵と、一家が持ち歩いている item の数。"""
@@ -1013,60 +1034,70 @@ class World:
         return self.surplus(seller, item) > 0 and imp >= -2
 
     def will_buy(self, buyer, item):
-        """村の決まり：要るものを、払える範囲で買う。
-        仕事の材料は 4 つまで仕入れる。薪は夜の分を 2 本まで。食事は空腹なら 2 つまで。"""
-        v = self.villagers[buyer]
-        have, price = self.has(buyer, item), self.price(item) or 99
-        if item in MERCHANT_GOODS:  # 町の品は、困りごとがあれば買う。薬草は余裕があれば家に 1 つ置いておく
-            if self.is_merchant(buyer):
-                return False
-            if self.needs_item(buyer, item):
-                return self.money(buyer) >= price
-            return (item == "薬草" and self.household_stock(buyer, "薬草") == 0
-                    and self.money(buyer) - price >= SAVINGS)
-        if item == "薪" and self.uses(buyer, item) and self.household_stock(buyer, "薪") < NIGHT_WOOD:
-            # 店の主人が買う薪は、家に今夜の分がなければまず家の暖房用。あれば店で使う分
-            return self.money(buyer) >= price
-        if self.uses(buyer, item):  # 店の材料：店の財布で、仲間の分も合わせて見込みの分まで。薪代は残しておく
-            shop = v["workplace"]
-            box = self.data["stores"].get(shop, {})
-            cash = self.purse(shop)
-            reserve = 0 if item == "薪" else self.price("薪") * WOOD_LOT * 2
-            if cash - price < reserve:
-                return False
-            carried = lambda i: box.get(i, 0) + sum(self.villagers[o]["inventory"].get(i, 0) for o in self.partners(buyer))
-            if item == "薪":  # 薪は仲間で使い回すので、二人の見込みの分を足し合わせる
-                want = sum(n * self._batches(o) for o in self.partners(buyer)
-                           for need, n in self.inputs(o).items() if need == "薪")
-                return carried("薪") < max(want, COOK_WOOD)
-            for o in self.partners(buyer):
-                ov = self.villagers[o]
-                if ov.get("to_order") and item not in SPOIL and any(
-                        item in self._members(need) for need in self.inputs(o)):  # 傷まない食材は、余裕があれば少し蓄える
-                    stock = carried(item)
-                    if stock < SHOP_BUFFER and (stock < 2 or cash - price >= SHOP_CASH):  # 料理 2 鍋分の材料費は残す
-                        return True
-                    continue
-                for need, n in self.inputs(o).items():
-                    members = self._members(need)
-                    if item in members:
-                        want = n * self._batches(o) + (2 if ov.get("to_order") else 0)
-                        have_now = sum(carried(i) for i in members)
-                        if have_now >= n and cash - price < SHOP_CASH:
-                            continue  # 1 回分の材料があるなら、手元に余裕がないかぎり買い足さない
-                        if have_now < max(want, n):
-                            return True
+        """村の決まり：要るものを、払える範囲で買う。何のために買うかで決まりが違う。"""
+        if item in MERCHANT_GOODS:
+            return self._wants_town_goods(buyer, item)
+        if self.uses(buyer, item) and not (item == "薪" and self.needs_tonight_wood(buyer)):
+            return self._wants_for_shop(buyer, item)  # 店の主人でも、家に今夜の薪がなければ、薪はまず家の分
+        return self._wants_for_home(buyer, item)
+
+    def _wants_town_goods(self, buyer, item):
+        """町の品は、困りごとがあれば買う。薬草は、貯えを残せるなら家に 1 つ置いておく。"""
+        price = self.price(item)
+        if self.is_merchant(buyer):
             return False
-        if item == "薪":  # 夜の薪は一家で 10 本。今夜の分は必需品、余裕があれば何晩分か貯める
+        if self.needs_item(buyer, item):
+            return self.money(buyer) >= price
+        return item == "薬草" and self.household_stock(buyer, "薬草") == 0 and self.money(buyer) - price >= SAVINGS
+
+    def _wants_for_home(self, buyer, item):
+        """自分や家族の暮らしの分。今夜の薪と、腹が減ったときの食事は必需品。
+        薪の買い溜めと煮炊きの食材は、貯えを残せる分のお金で。"""
+        v, price = self.villagers[buyer], self.price(item) or 99
+        if item == "薪":
             stock = self.household_stock(buyer, "薪")
             if stock < NIGHT_WOOD:
                 return self.money(buyer) >= price
             return stock < WOOD_STORE and self.money(buyer) - price * WOOD_LOT >= SAVINGS
         if item in MEALS:
-            return self.money(buyer) >= price and have < 2 and v["hunger"] >= 3
-        if item in INGREDIENTS:  # 家で煮炊きする食材：家に食材がなく、薪があって懐に余裕があれば
+            return self.money(buyer) >= price and self.has(buyer, item) < 2 and v["hunger"] >= 3
+        if item in INGREDIENTS:  # 家に食材がなく、煮炊きの薪があれば
             home_food = sum(self.home_stock(buyer, i) for i in INGREDIENTS)
-            return home_food < 2 and self.household_stock(buyer, "薪") >= COOK_WOOD * 2 and self.money(buyer) - price >= SAVINGS
+            return (home_food < HOME_KEEP["食材"] and self.household_stock(buyer, "薪") >= COOK_WOOD * 2
+                    and self.money(buyer) - price >= SAVINGS)
+        return False
+
+    def _wants_for_shop(self, buyer, item):
+        """店の材料：店の財布で、仲間の分も合わせて今日の見込みの分まで。薪代（二回分）は財布に残す。
+        店の財布に余裕があれば少し多めに（傷まない食材は酒場の蓄えとして 4 つまで）。"""
+        price = self.price(item) or 99
+        shop = self.villagers[buyer]["workplace"]
+        box = self.data["stores"].get(shop, {})
+        cash = self.purse(shop)
+        reserve = 0 if item == "薪" else self.price("薪") * WOOD_LOT * 2
+        if cash - price < reserve:
+            return False
+        have = lambda i: box.get(i, 0) + sum(self.villagers[o]["inventory"].get(i, 0) for o in self.partners(buyer))
+        if item == "薪":  # 薪は仲間で使い回すので、二人の見込みの分を足し合わせる
+            want = sum(n * self._batches(o) for o in self.partners(buyer)
+                       for need, n in self.inputs(o).items() if need == "薪")
+            return have("薪") < max(want, COOK_WOOD)
+        for o in self.partners(buyer):
+            ov = self.villagers[o]
+            if ov.get("to_order") and item not in SPOIL and any(
+                    item in self._members(need) for need in self.inputs(o)):  # 酒場の蓄え
+                if have(item) < SHOP_BUFFER and (have(item) < 2 or cash - price >= SHOP_CASH):
+                    return True
+                continue
+            for need, n in self.inputs(o).items():
+                members = self._members(need)
+                if item in members:
+                    want = n * self._batches(o) + (2 if ov.get("to_order") else 0)
+                    have_now = sum(have(i) for i in members)
+                    if have_now >= n and cash - price < SHOP_CASH:
+                        continue  # 1 回分の材料があるなら、財布に余裕がないかぎり買い足さない
+                    if have_now < max(want, n):
+                        return True
         return False
 
     def dump_amount(self, seller, item):
@@ -1074,7 +1105,7 @@ class World:
         村で売れそうな分（その半分）を残して、残りをまとめて売る。"""
         if item not in EXPORTS or self.is_merchant(seller):
             return 0
-        total = self.surplus(seller, item) + max(0, self.home_stock(seller, item) - (NIGHT_WOOD * 2 if item == "薪" else FAMILY_KEEP["食材"]))
+        total = self.surplus(seller, item) + max(0, self.home_stock(seller, item) - HOME_KEEP["薪" if item == "薪" else "食材"])
         limit = RESERVE.get(item, 99)
         if total < limit:
             return 0
@@ -1161,7 +1192,7 @@ class World:
                     sv["inventory"][item] -= 1
                 else:
                     self.store_at(seller)[item] -= 1
-        home_wood = item == "薪" and self.household_stock(buyer, "薪") < NIGHT_WOOD
+        home_wood = item == "薪" and self.needs_tonight_wood(buyer)
         if (self.store_at(buyer) is None and not self.uses(buyer, item)) or (
                 home_wood and (self.uses(buyer, item) or self.is_merchant(buyer))) or item in MERCHANT_GOODS:
             # 自分や家族のために買った物は買い物袋へ（売り物とは分ける。食べることはできる）
@@ -1395,12 +1426,12 @@ class World:
         for home in {v["home"] for v in self.villagers.values()}:  # 家の蔵にある、煮炊き用より多い食材も「売れる分」
             box = self.data["stores"].get(home, {})
             for item in INGREDIENTS:
-                have[item] = have.get(item, 0) + max(0, box.get(item, 0) - FAMILY_KEEP["食材"])
+                have[item] = have.get(item, 0) + max(0, box.get(item, 0) - HOME_KEEP["食材"])
             for item in ("薪",):
-                have[item] = have.get(item, 0) + max(0, box.get(item, 0) - NIGHT_WOOD * 2)
+                have[item] = have.get(item, 0) + max(0, box.get(item, 0) - HOME_KEEP["薪"])
         for home in {v["home"] for v in self.villagers.values()}:  # 今夜の薪がない家
             member = next(n for n, v in self.villagers.items() if v["home"] == home)
-            if self.household_stock(member, "薪") < NIGHT_WOOD:
+            if self.needs_tonight_wood(member):
                 want["薪"] = want.get("薪", 0) + NIGHT_WOOD
         def have_of(key):  # 分類なら、その中のどれでも
             return sum(have.get(i, 0) for i in self._members(key))

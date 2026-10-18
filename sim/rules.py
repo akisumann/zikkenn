@@ -1,38 +1,38 @@
-"""ルールで動く村人の頭脳。API なしで「基本的にはこう動く」を表す。
+"""ルールで動く村人の頭脳。API なしで「基本的にはこう動く」を表す（RULES.md 第 2 部）。
 
 毎ターン、まず「ついでの用事」を最大 3 つ済ませ、それから「この 2 時間の過ごし方」を 1 つ選ぶ。
-ツールは AI と同じものを使う。
+移動（20 分）なら、着いた先でまた用事と過ごし方を選ぶ（2 時間に 3 回まで）。ツールは AI と同じものを使う。
 
-ついでの用事（上から順に、当てはまるものを）
-  1. 食べる   … 空腹なら食事をとる。食事時は少しの空腹でも
-  2. 買う     … 食事の手持ちがなければ、目の前の人から買っておく
-  3. 分ける   … 家族、頼んできた人、好きな人が腹ぺこなら食事を分ける
-  4. 仕入れる … 加工する人は、仕事の材料を 2 回分を目安に仕入れる
-  5. 売る     … 余った品を欲しがる人に売る（食材は加工する人へ、薪は家々へ、食事は空腹な人へ）
-  0. 買い出し … 買い出し係は、家族の 1 日分（1 人朝昼 2 食）の食事を店でまとめて買い、家の蔵へ持ち帰る
-  0. 晩ごはん … 夕方に酒場にいて腹が減っていれば、払える限り酒場で料理を頼んで食べる
-  6. 備える   … 夜の薪がなければ買う
-  6.5 町の品 … 怪我なら薬草、道具が壊れたら道具、繕いきれない服は服を雑貨屋で買う。余裕があれば薬草を家に 1 つ
-  7. 家の食材 … 買い出し係は、店に食事がなければ煮炊き用の食材を買う
+要るもの（needs）は、急ぐ順に 体 → 家 → 仕事 で並べる：
+  自分の食事、怪我の薬草、薪（今夜の分・買い溜め）、家族の食事（買い出し係）、煮炊きの食材、
+  繕えない服、壊れた道具、薬草の備え、店の材料。
+要るものは何でも同じ手順で手に入れる：手元か家の蔵 → 目の前の人から買う → 売っている人のところへ行く。
+
+ついでの用事（上から順に、当てはまるものを 1 つ）
+  1. 体     … 夕方の酒場で晩ごはん。空腹なら食べる（食事時は少しの空腹でも）
+  2. 分ける … 家族、頼んできた人、好きな人が腹ぺこなら食事を分ける
+  3. 売る   … 余った品を欲しがる人に売る。村で買い手がなく、かなり余っていれば雑貨商人へ
+  4. 買う   … 要るものを、急ぐ順に、目の前の人が売ってくれれば買う
 
 この 2 時間の過ごし方（上から順に、当てはまるものを 1 つ）
-  0. 反応     … 見聞きしたことに心を動かす（印象・記憶。ターンは使わない）
-  1. 腹ぺこ   … 家なら食材と薪で煮炊きする（夜の薪は残す）。そうでなければ食事を売っている人の
-                ところへ行く。金がなければ売り物を売りに行く
-  1.6 買いに行く … 足りないもの（店の材料、家の今夜の薪、食事がないときの煮炊きの食材、町の品）は、
-                手の空いたときに売っている人のところへ買いに行く。家の分は買い出し係がいればその人が
-  2. 疲労     … くたくたなら家に帰って休む
-  3. 会話     … 話しかけられたら返事をする。話し好きは話しかけ、噂好きは噂を広める。
+  0. 反応   … 見聞きしたことに心を動かす（印象・記憶。ターンは使わない）
+  1. 役目   … 注文で料理を出す店の主人は、夕方は店を空けない
+  2. 体     … 家にいて腹が減っていて食事がなければ、家の食材と薪で煮炊きする（夜の薪は残す）
+  3. 買いに行く … 要るものを売っている人のところへ（仕事の時間は急ぎのものだけ。人の家には行かない）。
+                腹ぺこで買えなければ売り物を売りに行く。ひどく飢えれば人に頼む。
+                買い出し係は買った家族の分を家へ持ち帰る
+  4. 体     … くたくたなら家に帰って休む
+  5. 人     … 話しかけられたら返事をする。話し好きは話しかけ、噂好きは噂を広める。
                 仕事の時間は話し込まず仕事場へ。同じ仕事場に人がいれば、働きながら話す
-  3.5 保存食 … 昼過ぎ、余った魚や肉が傷む前に、魚は川辺で干物に（晴れの日だけ）、
+  6. 保存食 … 昼過ぎ、余った魚や肉が傷む前に、魚は川辺で干物に（晴れの日だけ）、
                 肉は家で燻製にする（酒場の主人は店の台所で）
-  3.8 納品   … 店に注文された品を持っていれば、店へ届ける
-  4. 行商     … 仕事のあと、余った品を買ってくれる人のところへ売りに行く
-  5. 習慣     … その人ならではの癖（seed の habits）
-  6. 日課     … 時間割どおりの場所へ行き、働く。家の手の空いた人（セン）は、家族のほつれた服を繕う。
-                その日の仕事場は朝に一度だけ決める。本業の品が余っていて、どこかが足りないと
-                聞いていれば、そこ（畑・川・森）を手伝う。足りない所がなければ、余った魚や肉を
-                干物や燻製にする。それもできず余りすぎていれば休む。同じ所で続けて働くと、はかどる
+  7. 納品   … 店に注文された品を持っていれば、店へ届ける
+  8. 行商   … 仕事のあと、余った品を買ってくれる人のところへ売りに行く
+  9. 習慣   … その人ならではの癖（seed の habits）
+  10. 日課  … 時間割どおりの場所へ行き、働く。その日の仕事場は朝に一度だけ決める。
+                本業の品が余っていて、どこかが足りないと聞いていれば、そこ（畑・川・森）を手伝う。
+                足りない所がなければ、余った魚や肉を干物や燻製にする。それもできず余りすぎていれば休む。
+                同じ所で続けて働くと、はかどる。家の手の空いた人（セン）は、家族のほつれた服を繕う
 
 毎朝 6 時は広場で朝礼。全員の手持ちと困りごとから、村で何が足りない・余っているかがわかり、
 その場で受け渡しをする。それ以外の時間に知る村の様子は、自分で見たことと人から聞いたことだけ。
@@ -41,14 +41,13 @@
 import random
 
 from .brains import QUICK_LIMIT, run_tool
-from .world import COOK_WOOD, MAX_MOVES, MEND_LIMIT, MERCHANT_GOODS, NIGHT_WOOD, SAVINGS, WOOD_LOT
-from .world import CATEGORIES, DAY_HOURS, HELP_JOBS, INGREDIENTS, MEALS, PRESERVE, RESERVE, SNACKS, SPOIL
+from .world import COOK_WOOD, MAX_MOVES, MEND_LIMIT, SAVINGS, WOOD_LOT
+from .world import CATEGORIES, DAY_HOURS, HELP_JOBS, INGREDIENTS, MEALS, OUTDOOR, PRESERVE, RESERVE, SNACKS, SPOIL
 
 # 時間割の既定値。「家」「仕事場」「自由」か、場所の名前を書く。seed の routine で上書きできる
 DEFAULT_ROUTINE = {6: "広場", 8: "仕事場", 10: "仕事場", 12: "仕事場", 14: "仕事場",
                    16: "自由", 18: "酒場", 20: "家"}
 MEAL_HOURS = (6, 12, 18)
-OUTDOOR = ("畑", "川辺", "森の入口")
 FREE_PLACES = ["広場", "広場", "川辺", "酒場", "森の入口"]
 
 # 口調。村人ごとに seed の style で上書きする（あいさつ・相づち・うわさ・村の様子・物乞いの言い方）
@@ -102,42 +101,23 @@ class RuleBrain:
     # ---------- ついでの用事（食べる・買う・売る・渡す） ----------
 
     def errand(self, world, name):
+        """ついでの用事を 1 つ済ませる（時間は使わない）。済ませたら True。"""
         v = world.villagers[name]
-        here = v["location"]
-        others = world.people_at(here, exclude=name)
-        meal_time = world.hour in MEAL_HOURS
-        has_meal = any(world.food_owner(name, f) for f in MEALS)
-
-        # 0. 買い出し係は、店で家族の 1 日分の食事をまとめて買う
-        if self.shopping_needed(world, name) > 0 and self.buy_for_family(world, name, others):
-            return True
-        # 0. 夕方に酒場にいて腹が減っていれば、晩ごはんは酒場で食べる（手持ちの食べ物は明日に取っておく）
+        others = world.people_at(v["location"], exclude=name)
+        # 1. 体：夕方に酒場にいれば晩ごはんを頼む。腹が減っていれば食べる（食事時は少しの空腹でも）
         if self.dinner(world, name, others):
             return True
-        # 1. 空腹なら食べる（食事時は少しの空腹でも）。本当に飢えたら食材をかじる
-        if v["hunger"] >= 5 or (meal_time and v["hunger"] >= 3):
+        if v["hunger"] >= 5 or (world.hour in MEAL_HOURS and v["hunger"] >= 3):
             if self.eat_something(world, name):
                 return True
-        # 2. 食事の手持ちがなければ、目の前の人から買っておく
-        if not has_meal and v["hunger"] >= 2 and self.buy_food(world, name, others):
-            return True
-        # 3. 家族や、頼んできた人・好きな人が腹ぺこなら分ける
+        # 2. 家族や、頼んできた人・好きな人が腹ぺこなら分ける
         if self.share(world, name, others):
             return True
-        # 4. 仕事の材料が心もとなければ仕入れる
-        if self.restock(world, name, others):
-            return True
-        # 5. 余った品を、欲しがる人に売る（食材は加工する人へ、薪は家々へ、食事は空腹な人へ）
+        # 3. 余った品を、欲しがる人に売る（村で買い手がなく、かなり余っていれば雑貨商人へ）
         if others and self.sell_something(world, name, others, include_food=True):
             return True
-        # 6. 夜の薪がなければ買う
-        if others and self.treat_yourself(world, name, others):
-            return True
-        # 6.5 困りごと（怪我・道具・服）に要る町の品を、雑貨屋で買う。余裕があれば薬草を家に 1 つ
-        if others and self.buy_supplies(world, name, others):
-            return True
-        # 7. 買い出し係は、店に食事がなければ、家で煮炊きする食材を買う
-        if others and self.home_ingredients_needed(world, name) and self.buy_ingredients(world, name, others):
+        # 4. 要るもの（急ぐ順）を、目の前の人が売ってくれれば買う
+        if others and self.buy_here(world, name, others):
             return True
         return False
 
@@ -159,16 +139,6 @@ class RuleBrain:
             return 0
         carried = sum(v["inventory"].get(m, 0) + v.get("basket", {}).get(m, 0) for m in MEALS)
         return len(world.family_of(name)) * 2 - world.meals_at_home(name) - carried
-
-    def buy_for_family(self, world, name, others):
-        need = self.shopping_needed(world, name)
-        for seller in others:
-            for food in MEALS:
-                if world.will_sell(seller, name, food) and world.money(name) >= world.price(food):
-                    amount = max(1, min(need, world.surplus(seller, food), world.money(name) // world.price(food)))
-                    result = run_tool(world, name, "buy", {"seller": seller, "item": food, "amount": amount})
-                    return "買った" in result
-        return False
 
     def dinner(self, world, name, others):
         """夕方、酒場で晩ごはんを頼んで食べる（1 日 1 回、払えるなら）。"""
@@ -199,22 +169,95 @@ class RuleBrain:
                 return True
         return False
 
-    def restock(self, world, name, others):
-        """仕事の材料（店なら仲間の分も）を、2 回分を目安に仕入れる。"""
+    # ---------- 要るもの（何でも同じ手順で手に入れる） ----------
+
+    def needs(self, world, name):
+        """要るものを急ぐ順に並べる（RULES.md 第 2 部 A）。
+        それぞれ、品物の候補・買ってよいか・1 回に買う数・その場で買うか・買いに出かけるか を持つ。
+        出かけるのは "急ぎ"（仕事の時間でも行く）か "手すき"（仕事の時間でなければ行く）。None なら出かけない。"""
         v = world.villagers[name]
-        for need, n in world.shop_inputs(name).items():
-            items = CATEGORIES.get(need, [need])
-            if sum(world.has(name, i) for i in items) >= n * 2 and not any(
-                    q for key, q in world.data.get("orders", {}).get(v["workplace"], {}).items()
-                    if any(i in CATEGORIES.get(key, [key]) for i in items)):
+        money = world.money(name)
+        cheapest = min(world.price(m) for m in MEALS)
+        lot = lambda limit: (lambda seller, item: max(1, min(limit, world.surplus(seller, item),
+                                                             world.funds(name, item) // world.price(item))))
+        out = []
+        def need(label, items, ok, amount, go=None, here=True):
+            out.append({"label": label, "items": items, "ok": ok, "amount": amount, "go": go, "here": here})
+
+        # 体：自分の食事。腹ぺこ（6 以上）なら買いに行く
+        if not any(world.food_owner(name, f) for f in MEALS) and v["hunger"] >= 2:
+            two = lambda seller, item: 2 if world.surplus(seller, item) >= 2 and money >= world.price(item) * 2 + SAVINGS else 1
+            need("食事", list(MEALS), lambda i: money >= world.price(i), two,
+                 go="急ぎ" if v["hunger"] >= 6 and money >= cheapest else None)
+        # 体：怪我の薬草
+        if world.needs_item(name, "薬草") and world.will_buy(name, "薬草"):
+            need("薬草", ["薬草"], lambda i: True, lambda s, i: 1, go="急ぎ")
+        # 家：薪。今夜の分は買いに行く（家の買い出し係がいればその人が）。余裕があれば何晩分か買い溜める
+        if world.will_buy(name, "薪") and (world.needs_tonight_wood(name) or not world.uses(name, "薪")):
+            shopper = any(world.villagers[n].get("shopper") for n in world.family_of(name))
+            go = None
+            if world.needs_tonight_wood(name) and (v.get("shopper") or not shopper):
+                go = "急ぎ" if v.get("shopper") or world.is_merchant(name) else "手すき"
+            need("薪", ["薪"], lambda i: world.will_buy(name, i), lot(WOOD_LOT), go=go)
+        # 家：家族の食事（買い出し係が、朝のうちに家族 1 人 2 食分をまとめて）
+        family_meals = self.shopping_needed(world, name)
+        if family_meals > 0:
+            need("家族の食事", list(MEALS), lambda i: money >= world.price(i), lot(family_meals),
+                 go="急ぎ" if 8 <= world.hour <= 14 and money >= cheapest else None)
+        # 家：煮炊きの食材（買い出し係が、どこにも食事を売っていないとき）
+        if self.home_ingredients_needed(world, name):
+            need("食材", list(INGREDIENTS), lambda i: world.will_buy(name, i),
+                 lambda s, i: 2 if world.surplus(s, i) >= 2 else 1, go="急ぎ")
+        # 家・仕事：町の品（繕えない服、薬草の備え、壊れた道具）
+        for item in ("服", "道具"):
+            if world.will_buy(name, item):
+                need(item, [item], lambda i: True, lambda s, i: 1, go="急ぎ" if item == "道具" else "手すき")
+        if not world.needs_item(name, "薬草") and world.will_buy(name, "薬草"):
+            need("薬草の備え", ["薬草"], lambda i: True, lambda s, i: 1, go="手すき")
+        # 仕事：店の材料（仲間の分も合わせた見込みの分）。その場では 2 回分あれば買い足さない（朝礼の注文があれば買う）
+        orders = world.data.get("orders", {}).get(v["workplace"], {})
+        for key, n in world.shop_inputs(name).items():
+            items = [i for i in CATEGORIES.get(key, [key]) if world.will_buy(name, i)]
+            if not items:
                 continue
-            for seller in others:
-                for item in items:
-                    if world.will_sell(seller, name, item) and world.will_buy(name, item):
-                        lot = 3 * WOOD_LOT if item == "薪" else 3
-                        amount = max(1, min(lot, world.surplus(seller, item), world.funds(name, item) // world.price(item)))
-                        run_tool(world, name, "buy", {"seller": seller, "item": item, "amount": amount})
+            ordered = any(q for k, q in orders.items() if any(i in CATEGORIES.get(k, [k]) for i in items))
+            enough = sum(world.has(name, i) for i in CATEGORIES.get(key, [key])) >= n * 2
+            need(f"店の{key}", items, lambda i: world.will_buy(name, i), lot(3 * WOOD_LOT if key == "薪" else 3),
+                 go="急ぎ", here=ordered or not enough)
+        return out
+
+    def buy_here(self, world, name, others):
+        """要るものを急ぐ順に見て、目の前の人が売ってくれるものを買う。"""
+        v = world.villagers[name]
+        sellers = sorted(others, key=lambda o: -self.score(v, o))  # 好きな相手から
+        for n in self.needs(world, name):
+            if not n["here"]:
+                continue
+            for seller in sellers:
+                for item in n["items"]:
+                    if n["ok"](item) and world.will_sell(seller, name, item):
+                        result = run_tool(world, name, "buy", {"seller": seller, "item": item,
+                                                               "amount": n["amount"](seller, item)})
+                        if "断られた" in result and n["label"] == "食事":
+                            world.update_impression(name, seller, -1, f"{item}を売ってくれなかった。")
                         return True
+        return False
+
+    def go_shopping(self, world, name, working):
+        """要るものを売っている人のところへ買いに行く。仕事の時間は急ぎのものだけ。朝礼の時間は食事だけ。"""
+        v = world.villagers[name]
+        if v["energy"] <= 1:
+            return False
+        for n in self.needs(world, name):
+            if n["go"] is None or (n["go"] == "手すき" and working):
+                continue
+            if world.hour == DAY_HOURS[0] and n["label"] != "食事":
+                continue
+            place = self.find_seller(world, name, n["items"], n["ok"])
+            if place:
+                world.log(f"🛒 **{name}** は{n['label']}を買いに{place}へ")
+                run_tool(world, name, "move", {"destination": place})
+                return True
         return False
 
     # ---------- この 2 時間の過ごし方 ----------
@@ -226,7 +269,7 @@ class RuleBrain:
         others = world.people_at(here, exclude=name)
         working = self.plan(world, v) in ("仕事場", v["workplace"]) and v["energy"] > 2  # 仕事の時間
 
-        # 0.5 注文を受けて料理を出す店の主人は、夕方（16〜20 時）は店を空けない
+        # 1. 役目：注文を受けて料理を出す店の主人は、夕方（16〜20 時）は店を空けない
         if world.villagers[name].get("to_order") and world.hour >= 16 and v["energy"] > 1:
             if here != v["workplace"]:
                 act("move", destination=v["workplace"])
@@ -234,50 +277,33 @@ class RuleBrain:
                 act("do", activity="店を開けて客を待っている")
             return
 
-        # 1. 腹ぺこで食事がない：食事を売っている人のところへ。だめなら売り物を売りに行く。それもなければ働く
+        # 2. 体：家にいて腹が減っていて食事がなければ、家の食材と薪で煮炊きする（夜の薪は残す）
         has_meal = any(world.food_owner(name, f) for f in MEALS)
-        # 0. 家にいて腹が減っていて、店の食事がなければ、家の食材と薪で煮炊きする（夜の薪は残す）
         if here == v["home"] and v["hunger"] >= 4 and not has_meal and self.cook(world, name):
             return
+
+        # 3. 要るもの（食事・薬草・今夜の薪・家族の食事・町の品・店の材料）を、売っている人のところへ買いに行く
+        if self.go_shopping(world, name, working):
+            return
+        # 腹ぺこなのに食事を買えない：売り物を売りに行く。それもなければ、ひどく飢えていれば人に頼む
         if v["hunger"] >= 6 and not has_meal:
-            seller_place = self.find_food_seller(world, name)
-            if seller_place and seller_place != here and world.money(name) >= min(world.price(m) for m in MEALS):
-                act("move", destination=seller_place)
-                return
             if self.market_trip(world, name, minimum=1):
                 return
             if others and v["hunger"] >= 9 and not working and random.random() < 0.3:
                 act("say", to=random.choice(others), message=style(v)["beg"], small=True)
                 return
+        # 買い出し係は、買った家族の分を家の蔵へ持ち帰る
+        if v.get("shopper") and any(v.get("basket", {}).get(m, 0) for m in MEALS) and here != v["home"] \
+                and self.shopping_needed(world, name) <= 0:
+            act("move", destination=v["home"])
+            return
 
-        # 1.5 買い出し係：朝のうちに店へ行って家族の分を買い、持ち帰る
-        if v.get("shopper") and 8 <= world.hour <= 14:
-            if self.shopping_needed(world, name) > 0:
-                seller_place = self.find_food_seller(world, name)
-                if seller_place and seller_place != here and world.money(name) >= min(world.price(m) for m in MEALS):
-                    act("move", destination=seller_place)
-                    return
-            elif any(v.get("basket", {}).get(m, 0) for m in MEALS) and here != v["home"]:
-                act("move", destination=v["home"])  # 買った分を家の蔵へ
-                return
-
-        # 1.6 足りないものは、手の空いたときに売っている人のところへ買いに行く
-        if world.hour > DAY_HOURS[0] and v["energy"] > 1:
-            for items, free in self.shopping_list(world, name):
-                if not free and working:
-                    continue
-                place = self.find_seller(world, name, items)
-                if place:
-                    world.log(f"🛒 **{name}** は{items[0] if len(items) == 1 else '・'.join(items)}を買いに{place}へ")
-                    act("move", destination=place)
-                    return
-
-        # 2. 疲労：くたくたなら家に帰って休む
+        # 4. 体：くたくたなら家に帰って休む
         if v["energy"] <= 1:
             act("rest") if here == v["home"] else act("move", destination=v["home"])
             return
 
-        # 3. 返事・おしゃべり（仕事の時間は、仕事場で働きながら話すので、ここでは話し込まない）
+        # 5. 人：返事・おしゃべり（仕事の時間は、仕事場で働きながら話すので、ここでは話し込まない）
         if not working:
             talker = self.addressed_by(world, name, others)
             if talker and random.random() < v.get("talk", 0.5) + 0.3:
@@ -288,7 +314,7 @@ class RuleBrain:
                 self.chat(world, name, others)
                 return
 
-        # 3.5 昼過ぎ、余った魚や肉が傷む前に、干物や燻製にする
+        # 6. 仕事：昼過ぎ、余った魚や肉が傷む前に、干物や燻製にする
         item = self.preserve_plan(world, name) if world.hour in (14, 16) else None
         if item:
             rule = PRESERVE[item]
@@ -301,23 +327,23 @@ class RuleBrain:
             act("move", destination=place)
             return
 
-        # 3.8 店に注文された品を持っていれば、届けに行く
+        # 7. 仕事：店に注文された品を持っていれば、届けに行く
         shop = self.delivery_target(world, name)
         if shop and shop != here:
             act("move", destination=shop)
             return
 
-        # 4. 仕事のあと、余った品を売りに行く
+        # 8. 仕事：仕事のあと、余った品を売りに行く
         if world.hour >= 14 and self.market_trip(world, name):
             return
 
-        # 5. 習慣
+        # 9. 習慣（その人ならではの癖）
         for habit in v.get("habits", []):
             if world.hour in habit["hours"] and random.random() < habit["chance"]:
                 if self.do_habit(world, name, habit, others):
                     return
 
-        # 6. 日課
+        # 10. 日課（時間割どおりの場所へ行き、働く）
         self.routine(world, name, others)
 
     # ---------- 0. 反応 ----------
@@ -351,24 +377,13 @@ class RuleBrain:
         run_tool(world, name, "eat", {"item": food[0]})
         return True
 
-    def buy_food(self, world, name, others):
-        v = world.villagers[name]
-        for seller in sorted(others, key=lambda o: -self.score(v, o)):
-            for food in MEALS:
-                if world.will_sell(seller, name, food) and world.money(name) >= world.price(food):
-                    amount = 2 if world.surplus(seller, food) >= 2 and world.money(name) >= world.price(food) * 2 + SAVINGS else 1
-                    result = run_tool(world, name, "buy", {"seller": seller, "item": food, "amount": amount})
-                    if "断られた" in result:
-                        world.update_impression(name, seller, -1, f"{food}を売ってくれなかった。")
-                    return True
-        return False
-
     def find_food_seller(self, world, name):
-        """食べ物が余っていそうな人の居場所（人の家は除く）。"""
-        return self.find_seller(world, name, list(MEALS), here_ok=True)
+        """食事を売っている人の居場所（人の家は除く）。"""
+        return self.find_seller(world, name, list(MEALS), ok=lambda i: True, here_ok=True)
 
-    def find_seller(self, world, name, items, here_ok=False):
+    def find_seller(self, world, name, items, ok=None, here_ok=False):
         """items のどれかを売ってくれそうな人の居場所（人の家は除く。さっき行った所にはもう行かない）。"""
+        ok = ok or (lambda i: world.will_buy(name, i))
         v = world.villagers[name]
         homes = {ov["home"] for ov in world.villagers.values()}
         for other, ov in world.villagers.items():
@@ -376,44 +391,14 @@ class RuleBrain:
             if other == name or place in homes or place not in world.data["places"] or (
                     not here_ok and place in v.get("visited", [])):
                 continue
-            if any(world.will_sell(other, name, i) and world.will_buy(name, i) for i in items):
+            if any(world.will_sell(other, name, i) and ok(i) for i in items):
                 return place
         return None
-
-    def shopping_list(self, world, name):
-        """買いに行くべきもの。[(品物の候補, 仕事の時間でも行くか)]
-        店の主人は店の材料（見込みの分に足りなければ）。家の今夜の薪は、買い出し係がいればその人が、
-        いなければ家族の誰かが。買い出し係は、店に食事がなければ煮炊き用の食材も。"""
-        v = world.villagers[name]
-        wants = []
-        for need in world.shop_inputs(name):
-            items = [i for i in CATEGORIES.get(need, [need]) if world.will_buy(name, i)]
-            if items:
-                wants.append((items, True))
-        shopper = any(world.villagers[n].get("shopper") for n in world.family_of(name))
-        if (v.get("shopper") or not shopper) and world.household_stock(name, "薪") < NIGHT_WOOD:
-            wants.append((["薪"], bool(v.get("shopper") or world.is_merchant(name))))
-        if self.home_ingredients_needed(world, name):
-            items = [i for i in INGREDIENTS if world.will_buy(name, i)]
-            if items:
-                wants.append((items, True))
-        for item in MERCHANT_GOODS:  # 道具が壊れた・怪我をしたなら仕事の時間でも。服や薬草の備えは手の空いたときに
-            if world.will_buy(name, item):
-                wants.append(([item], item != "服" and world.needs_item(name, item)))
-        return wants
 
     def home_ingredients_needed(self, world, name):
         """買い出し係が、食事の代わりに煮炊きの食材を買うときか（家族の分の食事が足りず、どこにも売っていない）。"""
         return (world.villagers[name].get("shopper") and self.shopping_needed(world, name) > 0
                 and self.find_food_seller(world, name) is None)
-
-    def buy_ingredients(self, world, name, others):
-        for seller in others:
-            for item in INGREDIENTS:
-                if world.will_sell(seller, name, item) and world.will_buy(name, item):
-                    run_tool(world, name, "buy", {"seller": seller, "item": item, "amount": 2 if world.surplus(seller, item) >= 2 else 1})
-                    return True
-        return False
 
     def any_food(self, world, name):
         inv = world.villagers[name]["inventory"]
@@ -446,30 +431,6 @@ class RuleBrain:
                     and any(world.dump_amount(name, g) > 0 for g in goods)):
                 return ov["location"]
         return None
-
-    def treat_yourself(self, world, name, others):
-        """要るものを買う。夜の薪が足りなければ買う。"""
-        v = world.villagers[name]
-        wants = []
-        if world.will_buy(name, "薪"):  # 今夜の分がなければ必ず、余裕があれば何晩分か
-            wants.append("薪")
-        for item in wants:
-            for seller in others:
-                if world.will_sell(seller, name, item) and world.money(name) >= world.price(item):
-                    amount = 1
-                    if item == "薪":  # ひと束（一晩分）を、売り手の余りと手持ちの範囲で
-                        amount = max(1, min(WOOD_LOT, world.surplus(seller, item), world.money(name) // world.price(item)))
-                    run_tool(world, name, "buy", {"seller": seller, "item": item, "amount": amount})
-                    return True
-        return False
-
-    def buy_supplies(self, world, name, others):
-        for seller in others:
-            for item in MERCHANT_GOODS:
-                if world.will_sell(seller, name, item) and world.will_buy(name, item):
-                    run_tool(world, name, "buy", {"seller": seller, "item": item, "amount": 1})
-                    return True
-        return False
 
     def delivery_target(self, world, name):
         """持っている品を注文している店（仕事を一区切りした 10 時以降）。"""
