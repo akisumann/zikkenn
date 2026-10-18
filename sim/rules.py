@@ -18,14 +18,15 @@
   2. 疲労     … くたくたなら家に帰って休む
   3. 会話     … 話しかけられたら返事をする。話し好きは話しかけ、噂好きは噂を広める。
                 仕事の時間は話し込まず仕事場へ。同じ仕事場に人がいれば、働きながら話す
-  3.5 燻製   … 昼過ぎ、余った魚や肉が傷む前に、家で燻製にする（酒場の主人は店の台所で）
+  3.5 保存食 … 昼過ぎ、余った魚や肉が傷む前に、魚は川辺で干物に（干せない日は家で燻製に）、
+                肉は家で燻製にする（酒場の主人は店の台所で燻製に）
   3.8 納品   … 店に注文された品を持っていれば、店へ届ける
   4. 行商     … 仕事のあと、余った品を買ってくれる人のところへ売りに行く
   5. 習慣     … その人ならではの癖（seed の habits）
   6. 日課     … 時間割どおりの場所へ行き、働く。材料が足りなければ仕入れに行く。
                 その日の仕事場は朝に一度だけ決める。本業の品が余っていて、どこかが足りないと
                 聞いていれば、そこ（畑・川・森）を手伝う。足りない所がなければ、余った魚や肉を
-                燻製にする。それもできず余りすぎていれば休む。同じ所で続けて働くと、はかどる
+                干物や燻製にする。それもできず余りすぎていれば休む。同じ所で続けて働くと、はかどる
 
 毎朝 6 時は広場で朝礼。全員の手持ちと困りごとから、村で何が足りない・余っているかがわかり、
 その場で受け渡しをする。それ以外の時間に知る村の様子は、自分で見たことと人から聞いたことだけ。
@@ -487,14 +488,15 @@ class RuleBrain:
         return job
 
     def preserve_plan(self, world, name):
-        """余った魚や肉を保存食にできるなら、その食材を返す。"""
-        v = world.villagers[name]
-        for item, rule in PRESERVE.items():
+        """余った魚や肉を干物・燻製にできるなら、作るもの（干物・燻製魚・燻製肉）を返す。
+        魚は晴れていれば川辺で干物に（薪がいらない）、干せない日は家で燻製に。"""
+        for make, rule in PRESERVE.items():
             if world.data["weather"] in rule["weather_ng"]:
                 continue
-            enough = all(world.has(name, n) >= k for n, k in rule["needs"].items())
-            if enough and world.surplus(name, item) >= 2:
-                return item
+            enough = all((world.household_stock(name, n) if n == "薪" else world.has(name, n)) >= k
+                         for n, k in rule["needs"].items())
+            if enough and world.surplus(name, rule["from"]) >= 2:
+                return make
         return None
 
     def plan(self, world, v):
