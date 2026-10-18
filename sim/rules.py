@@ -24,8 +24,8 @@
                 その日の仕事場は朝に一度だけ決める。本業の品が余っていて、どこかが足りないと
                 聞いていれば、そこ（畑・川・森）を手伝う。同じ所で続けて働くと、はかどる
 
-朝は身支度しながら家族と話す（時間は使わない）。村の様子（何が足りない・余っている）は、
-自分で見たことと、人から聞いたことでしか知らない。話をすると、それが相手に伝わる。
+毎朝 6 時は広場で朝礼。全員の手持ちと困りごとから、村で何が足りない・余っているかがわかり、
+その場で受け渡しをする。それ以外の時間に知る村の様子は、自分で見たことと人から聞いたことだけ。
 """
 
 import random
@@ -34,7 +34,7 @@ from .brains import QUICK_LIMIT, run_tool
 from .world import CATEGORIES, DAY_HOURS, HELP_JOBS, INGREDIENTS, MEALS, RESERVE
 
 # 時間割の既定値。「家」「仕事場」「自由」か、場所の名前を書く。seed の routine で上書きできる
-DEFAULT_ROUTINE = {6: "家", 8: "仕事場", 10: "仕事場", 12: "仕事場", 14: "仕事場",
+DEFAULT_ROUTINE = {6: "広場", 8: "仕事場", 10: "仕事場", 12: "仕事場", 14: "仕事場",
                    16: "自由", 18: "酒場", 20: "家"}
 MEAL_HOURS = (6, 12, 18)
 OUTDOOR = ("畑", "川辺", "森の入口")
@@ -72,7 +72,7 @@ class RuleBrain:
         self.main_action(world, name)  # この 2 時間の過ごし方を 1 つ選ぶ
 
     def morning_talk(self, world, name):
-        """朝は身支度しながら家族と話す（時間は使わない）。村の様子はここでも伝わる。"""
+        """朝礼の場で、まず家族と話す（時間は使わない）。"""
         if world.hour != DAY_HOURS[0]:
             return
         v = world.villagers[name]
@@ -281,7 +281,7 @@ class RuleBrain:
         """要るものを買う。夜の薪が足りなければ買い、懐に余裕があれば夕方の酒場で料理を頼む。"""
         v = world.villagers[name]
         wants = []
-        if world.will_buy(name, "薪") and v["inventory"].get("薪", 0) == 0:
+        if world.will_buy(name, "薪"):  # 今夜の分がなければ必ず、余裕があれば何晩分か
             wants.append("薪")
         if v["location"] == "酒場" and world.hour >= 16 and v["money"] >= 80 and random.random() < 0.5:
             wants.append("料理")
@@ -484,6 +484,9 @@ class RuleBrain:
 def is_small_talk(world, quote):
     """あいさつや相づちなど、噂にする価値のないセリフか。"""
     if not quote or len(quote) < 8 or quote == BEG or quote.startswith("ねえ聞いた"):
+        return True
+    if ("が足りない" in quote or "が余ってる" in quote) and quote.endswith(("らしいよ。", "んだ。")):
+        return True  # 村の様子の話は、それ自体が伝わるので噂話にはしない
         return True
     templates = GREET_GOOD + GREET_PLAIN + GREET_BAD + REPLY_GOOD + REPLY_PLAIN + REPLY_BAD
     return any(quote == t.format(t=n) for t in templates for n in world.villagers)

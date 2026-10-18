@@ -28,6 +28,8 @@ PRICES = {"料理": 40, "サンドイッチ": 30, "パン": 20, "麦": 20, "魚"
 HELP_JOBS = {"畑": {"麦": 1}, "川辺": {"魚": 1}, "森の入口": {"薪": 1}}  # 誰でもできる手伝い仕事（本業より実入りは少ない）
 # これだけ売れ残ったら「余っている」と感じる（村で 1〜2 日分の備蓄の目安）
 RESERVE = {"麦": 8, "魚": 4, "肉": 4, "薪": 8, "パン": 8, "サンドイッチ": 6, "料理": 6}
+WOOD_STORE = 5  # 薪は傷まないので、懐に余裕があれば一家で何晩分か貯めておく
+ASSEMBLY_PLACE = "広場"  # 毎朝 6 時、全員がここに集まって朝礼をする
 NEWS_DAYS = 2  # 聞いた村の様子を当てにする日数
 SAY_STATE = {"不足": "足りない", "余り": "余っている"}
 KEEP = {"料理": 2, "サンドイッチ": 2, "パン": 2, "麦": 1, "魚": 1, "肉": 1, "薪": 1}  # 自分用に残す数。超えた分なら売る
@@ -75,7 +77,9 @@ class World:
             "weather": "晴れ",
             "villagers": villagers,
         }
-        return cls(data)
+        world = cls(data)
+        world.morning_assembly()
+        return world
 
     def save(self):
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -440,8 +444,11 @@ class World:
         have, price = v["inventory"].get(item, 0), self.price(item) or 99
         if self.uses(buyer, item):
             return v["money"] >= price and have < 4
-        if item == "薪":  # 夜の薪は一家で 1 本。家族の誰かが持っていれば買わない
-            return v["money"] - price >= 30 and self.household_stock(buyer, "薪") < 2
+        if item == "薪":  # 夜の薪は一家で 1 本。今夜の分は必需品、余裕があれば何晩分か貯める
+            stock = self.household_stock(buyer, "薪")
+            if stock == 0:
+                return v["money"] >= price
+            return stock < WOOD_STORE and v["money"] - price >= 40
         if item in MEALS:
             return v["money"] >= price and have < 2 and v["hunger"] >= 3
         return False
@@ -565,8 +572,6 @@ class World:
                 self.villagers[giver]["inventory"]["薪"] -= 1
             else:
                 self.log(f"🥶 {home}には薪がなく、寒い夜になった")
-                for name in family:
-                    self.note(name, "薪", "不足")
             for name in family:
                 v = self.villagers[name]
                 v["location"] = home
@@ -580,4 +585,37 @@ class World:
         self.data["day"] += 1
         self.data["hour_index"] = 0
         self.data["weather"] = random.choices([w for w, _ in WEATHERS], [p for _, p in WEATHERS])[0]
+        self.morning_assembly()
         return True
+
+    def morning_assembly(self):
+        """朝 6 時の朝礼。全員が広場に集まり、それぞれの手持ちと困りごとを話す。
+        その場で全員が聞くので、村全体で何が足りない・余っているかが、うわさではなく正確にわかる。
+        受け渡しは、この時間に広場で顔を合わせた者どうしで行う（ついでの用事）。"""
+        for v in self.villagers.values():
+            v["location"] = ASSEMBLY_PLACE
+            v.pop("travel", None)
+            v["activity"] = "朝礼に出ている"
+        have, want = {}, {}
+        for name, v in self.villagers.items():
+            for item in PRICES:
+                have[item] = have.get(item, 0) + max(0, self.surplus(name, item))
+            for need, n in self.inputs(name).items():  # 仕事の材料：2 回分に足りない分
+                items = self._members(need)
+                short = n * 2 - sum(v["inventory"].get(i, 0) for i in items)
+                for i in items:
+                    want[i] = want.get(i, 0) + max(0, short) / len(items)
+            if not any(self.food_owner(name, f) for f in MEALS):  # 今日の食事がない
+                want["パン"] = want.get("パン", 0) + 1
+        for home in {v["home"] for v in self.villagers.values()}:  # 今夜の薪がない家
+            member = next(n for n, v in self.villagers.items() if v["home"] == home)
+            if self.household_stock(member, "薪") == 0:
+                want["薪"] = want.get("薪", 0) + 1
+        short = [i for i in PRICES if want.get(i, 0) > have.get(i, 0)]
+        extra = [i for i in PRICES if i not in short and have.get(i, 0) >= RESERVE.get(i, 99) and not want.get(i)]
+        for name in self.villagers:
+            for item in short:
+                self.note(name, item, "不足", "朝礼で聞いた")
+            for item in extra:
+                self.note(name, item, "余り", "朝礼で聞いた")
+        self.log(f"🌅 朝礼（{ASSEMBLY_PLACE}）：足りない＝{'、'.join(short) or 'なし'}／余っている＝{'、'.join(extra) or 'なし'}")
