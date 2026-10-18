@@ -895,6 +895,7 @@ class World:
         self.spoil()
         homes = {}
         for name, v in self.villagers.items():
+            self._take_wood_home(name)
             homes.setdefault(v["home"], []).append(name)
             v["location"] = v["home"]
             self.put_away(name)
@@ -925,6 +926,19 @@ class World:
         self.data["weather"] = random.choices([w for w, _ in WEATHERS], [p for _, p in WEATHERS])[0]
         self.morning_assembly()
         return True
+
+    def _take_wood_home(self, name):
+        """店じまい：店の主人は、家に今夜の薪がなければ、店の棚から一晩分を持ち帰る（自分の薪なので）。"""
+        v = self.villagers[name]
+        shop = self.data["stores"].get(v["workplace"])
+        if shop is None or self.shop_owner(v["workplace"]) != name:
+            return
+        lacking = NIGHT_WOOD - self.household_stock(name, "薪")
+        n = min(max(0, lacking), shop.get("薪", 0))
+        if n > 0:
+            shop["薪"] -= n
+            self._add(self.data["stores"].setdefault(v["home"], {}), "薪", n)
+            self.log(f"🪵 **{name}** は店の薪を{n}本、家に持ち帰った")
 
     def _breakfast(self, name):
         """朝礼に出かける前に、家の蔵のもので朝ごはんを食べる（傷みやすいものから）。"""
