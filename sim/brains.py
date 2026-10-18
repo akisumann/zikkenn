@@ -36,7 +36,10 @@ ACTION_TOOLS = [
         "to": {**S, "description": "話しかける相手の名前。全員に向けるなら「みんな」、独り言なら「ひとりごと」"},
         "message": {**S, "description": "口に出すセリフ（あなたらしい口調で、1〜3 文）"},
     }),
-    _tool("work", "自分の仕事場で仕事をする。生産物が手に入るが疲れる。", {}),
+    _tool("work", "仕事場で仕事をする。生産物が手に入るが疲れる。同じ場所にいる人と、働きながら話すこともできる。", {
+        "to": {**S, "description": "働きながら話しかける相手。話さないなら空文字"},
+        "message": {**S, "description": "働きながら口にするセリフ。話さないなら空文字"},
+    }),
     _tool("rest", "その場で休んで元気を回復する。", {}),
     _tool("do", "上のどれにも当てはまらないことをする（散歩、歌う、考え込む、掃除する、など）。", {
         "activity": {**S, "description": "何をしているかの描写（例：「井戸のそばで空を見上げている」）"},
@@ -79,7 +82,10 @@ def run_tool(world, name, tool, args):
     if tool == "say":
         return world.act_say(name, args["to"], args["message"])
     if tool == "work":
-        return world.act_work(name)
+        result = world.act_work(name)
+        if args.get("message") and args.get("to"):
+            result += " " + world.act_say(name, args["to"], args["message"])
+        return result
     if tool == "eat":
         return world.act_eat(name, args["item"])
     if tool == "give":

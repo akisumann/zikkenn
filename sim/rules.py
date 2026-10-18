@@ -15,7 +15,8 @@
   0. 反応     … 見聞きしたことに心を動かす（印象・記憶。ターンは使わない）
   1. 腹ぺこ   … 食事を売っている人のところへ行く。金がなければ売り物を売りに行く
   2. 疲労     … くたくたなら家に帰って休む
-  3. 会話     … 話しかけられたら返事をする。話し好きは話しかけ、噂好きは噂を広める（仕事中は控える）
+  3. 会話     … 話しかけられたら返事をする。話し好きは話しかけ、噂好きは噂を広める。
+                仕事の時間は話し込まず仕事場へ。同じ仕事場に人がいれば、働きながら話す
   4. 行商     … 仕事のあと、余った品を買ってくれる人のところへ売りに行く
   5. 習慣     … その人ならではの癖（seed の habits）
   6. 日課     … 時間割どおりの場所へ行き、働く。材料が足りなければ仕入れに行く。
@@ -127,7 +128,7 @@ class RuleBrain:
         act = lambda tool, **args: run_tool(world, name, tool, args)
         here = v["location"]
         others = world.people_at(here, exclude=name)
-        working = here == v["workplace"] and self.plan(world, v) in ("仕事場", v["workplace"]) and v["energy"] > 2
+        working = self.plan(world, v) in ("仕事場", v["workplace"]) and v["energy"] > 2  # 仕事の時間
 
         # 1. 腹ぺこで食事がない：食事を売っている人のところへ。だめなら売り物を売りに行く。それもなければ働く
         has_meal = any(v["inventory"].get(f, 0) for f in MEALS)
@@ -147,15 +148,15 @@ class RuleBrain:
             act("rest") if here == v["home"] else act("move", destination=v["home"])
             return
 
-        # 3. 返事・おしゃべり（仕事中はめったに手を止めない）
-        chatty = 0.1 if working else 1.0
-        talker = self.addressed_by(world, name, others)
-        if talker and random.random() < (v.get("talk", 0.5) + 0.3) * chatty:
-            act("say", to=talker, message=self.reply(v, talker))
-            return
-        if others and random.random() < v.get("talk", 0.5) * 0.4 * chatty:
-            self.chat(world, name, others)
-            return
+        # 3. 返事・おしゃべり（仕事の時間は、仕事場で働きながら話すので、ここでは話し込まない）
+        if not working:
+            talker = self.addressed_by(world, name, others)
+            if talker and random.random() < v.get("talk", 0.5) + 0.3:
+                act("say", to=talker, message=self.reply(v, talker))
+                return
+            if others and random.random() < v.get("talk", 0.5) * 0.4:
+                self.chat(world, name, others)
+                return
 
         # 4. 仕事のあと、余った品を売りに行く
         if world.hour >= 14 and self.market_trip(world, name):
@@ -296,7 +297,22 @@ class RuleBrain:
             return random.choice(v["lines"])
         return random.choice(pool).format(t=talker)
 
+    def talk_while_working(self, world, name, others):
+        """同じ場所にいる人と、手を動かしながら話す。話しかけられていれば返事をする。"""
+        v = world.villagers[name]
+        talker = self.addressed_by(world, name, others)
+        if talker and random.random() < v.get("talk", 0.5) + 0.3:
+            return {"to": talker, "message": self.reply(v, talker)}
+        if others and random.random() < v.get("talk", 0.5) * 0.6:
+            to, message = self.pick_chat(world, name, others)
+            return {"to": to, "message": message}
+        return {"to": "", "message": ""}
+
     def chat(self, world, name, others):
+        to, message = self.pick_chat(world, name, others)
+        run_tool(world, name, "say", {"to": to, "message": message})
+
+    def pick_chat(self, world, name, others):
         """誰かに話しかける。噂好きなら、聞いた話を広める。"""
         v = world.villagers[name]
         target = max(others, key=lambda o: self.score(v, o) + random.random() * 3)
@@ -312,7 +328,7 @@ class RuleBrain:
             s = self.score(v, target)
             pool = GREET_GOOD if s >= 2 else GREET_BAD if s <= -2 else GREET_PLAIN
             msg = random.choice(pool).format(t=target)
-        run_tool(world, name, "say", {"to": target, "message": msg})
+        return target, msg
 
     # ---------- 6. 習慣 ----------
 
@@ -403,9 +419,9 @@ class RuleBrain:
         elif here == v["workplace"] and plan == "仕事場" and not v["produce"]:
             run_tool(world, name, "do", {"activity": random.choice(CHORES)})  # 品物を作らない人は家のことをする
         elif here == dest and plan == "仕事場" and here in HELP_JOBS and here != v["workplace"] and v["energy"] > 2:
-            run_tool(world, name, "work", {})  # 手伝い仕事
+            run_tool(world, name, "work", self.talk_while_working(world, name, others))  # 手伝い仕事
         elif here == v["workplace"] and plan in ("仕事場", v["workplace"]) and v["energy"] > 2 and not lacking:
-            run_tool(world, name, "work", {})
+            run_tool(world, name, "work", self.talk_while_working(world, name, others))
         elif here == v["workplace"] and lacking:
             run_tool(world, name, "do", {"activity": f"{lacking[0]}が届くのを待っている"})
         elif others and random.random() < v.get("talk", 0.5):
