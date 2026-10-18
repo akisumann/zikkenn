@@ -1,13 +1,12 @@
-"""村人の「頭脳」。いまの状況を受け取り、ツールを使って行動を決める。
+"""村人が使えるツールと、Claude で動く村人の頭脳。
 
-- ClaudeBrain: 村人ひとりひとりを Claude のエージェントとして動かす（本番）
-- MockBrain:   API を使わずにランダムに動く（エンジンの動作確認用）
+- ClaudeBrain: 村人ひとりひとりを Claude のエージェントとして動かす（--ai）
+- ルールで動く頭脳は rules.py（既定）
 """
 
 import os
-import random
 
-from .world import FOOD
+from .world import PRICES
 
 MODEL = os.environ.get("VILLAGE_MODEL", "claude-opus-5-5")
 EFFORT = os.environ.get("VILLAGE_EFFORT", "low")
@@ -39,9 +38,15 @@ ACTION_TOOLS = [
         "message": {**S, "description": "口に出すセリフ（あなたらしい口調で、1〜3 文）"},
     }),
     _tool("work", "自分の仕事場で仕事をする。生産物が手に入るが疲れる。", {}),
-    _tool("eat", "持っている食べ物を 1 つ食べる。", {"item": {**S, "description": "パン・魚・野菜のどれか"}}),
+    _tool("eat", "持っている食べ物や薬草を 1 つ口にする。", {"item": {**S, "description": "シチュー・パン・肉・魚・野菜・山菜（空腹が減る）、薬草（元気が戻る）"}}),
     _tool("give", "その場にいる人に物や銀貨を渡す。取引や贈り物に使う。", {
         "to": S, "item": {**S, "description": "持ち物の名前、または「銀貨」"}, "amount": I,
+    }),
+    _tool("buy", "その場にいる人から、村の相場で物を買う。相手に余りがなければ断られる。", {
+        "seller": S, "item": {**S, "description": "シチュー・パン・肉・魚・野菜・山菜・薬草・エール・薪"}, "amount": I,
+    }),
+    _tool("sell", "その場にいる人に、持ち物を 1 つ村の相場で売り込む。要らなければ断られる。", {
+        "buyer": S, "item": S,
     }),
     _tool("rest", "その場で休んで元気を回復する。", {}),
     _tool("do", "上のどれにも当てはまらないことをする（散歩、歌う、考え込む、掃除する、など）。", {
@@ -75,6 +80,10 @@ def run_tool(world, name, tool, args):
         return world.act_eat(name, args["item"])
     if tool == "give":
         return world.act_give(name, args["to"], args["item"], args["amount"])
+    if tool == "buy":
+        return world.act_buy(name, args["seller"], args["item"], args["amount"])
+    if tool == "sell":
+        return world.act_sell(name, args["buyer"], args["item"])
     if tool == "rest":
         return world.act_rest(name)
     if tool == "do":
@@ -86,21 +95,36 @@ def run_tool(world, name, tool, args):
     return f"{tool} という行動はない。"
 
 
+def habits_text(v):
+    lines = []
+    if v.get("routine"):
+        lines.append("- 時間割の変更：" + "、".join(f"{h}時は{p}" for h, p in v["routine"].items()))
+    lines.append("- 基本の一日：朝は家、8〜14時は仕事場で働き、夕方は自由、日暮れは酒場に集まり、夜は家に帰る。")
+    lines += [f"- {h['desc']}" for h in v.get("habits", [])]
+    if v.get("lines"):
+        lines.append("- 口癖：" + " / ".join(f"「{l}」" for l in v["lines"]))
+    return "\n".join(lines)
+
+
 def system_prompt(world, name):
     v = world.villagers[name]
     return f"""あなたは{world.data['name']}に暮らす村人「{name}」です。{world.data['description']}
 
 ## あなた
 - {v['age']}歳、{v['job']}。家は「{v['home']}」、仕事場は「{v['workplace']}」。
+- 仕事をすると{"、".join(f"{k}×{n}" for k, n in v["produce"].items())}が手に入る。{"仕事には毎回" + "、".join(f"{k}×{n}" for k, n in v["needs"].items()) + "が要る。" if v.get("needs") else ""}
 - 性格：{v['personality']}
 - 願い：{v['goal']}
 
+## ふだんの暮らし（基本はこう動くが、状況しだいで変えてよい）
+{habits_text(v)}
+
 ## この世界での過ごし方
 これはシミュレーションです。2 時間ごとに、あなたは「いまの状況」を受け取り、次の 2 時間に何をするかをツールで決めます。
-- 行動ツール（move / say / work / eat / give / rest / do）は 1 回につき 1 つだけ使えます。使った時点でこの 2 時間は終わります。
+- 行動ツール（move / say / work / eat / give / buy / sell / rest / do）は 1 回につき 1 つだけ使えます。使った時点でこの 2 時間は終わります。
 - remember と update_impression は心の中の動きなので、行動の前に何度でも使えます。大事な出来事や秘密、約束は remember に残してください。あなたが明日以降に思い出せるのは、記憶メモだけです。
-- 空腹が 10 に近づくとつらくなります。食べ物は自分で作るか、人と取引して手に入れます。値段や約束は話し合って決めてください。
-- 夜 22 時になると、全員が自動で家に帰って眠ります。
+- 空腹が 10 に近づくとつらくなります。食べ物は自分で作るか、人から買うか、分けてもらいます。村の相場は {"、".join(f"{k} {p}枚" for k, p in PRICES.items())}。値引きや物々交換は話し合いと give で行ってください。
+- 夜 22 時になると、全員が自動で家に帰って眠ります。薪を 1 本燃やせば暖かくよく眠れますが、なければ冷えてあまり疲れが取れません。
 
 ## 心がけ
 - {name}として、その性格と願いのとおりに、自分で考えて動いてください。物語の都合や、誰かを喜ばせることより、{name}らしさを優先します。
@@ -155,29 +179,3 @@ class ClaudeBrain:
             messages.append({"role": "assistant", "content": response.content})
             messages.append({"role": "user", "content": results})
         world.act_do(name, "迷ったまま時間が過ぎた")
-
-
-class MockBrain:
-    """API を使わないテスト用の頭脳。それらしくランダムに動く。"""
-
-    LINES = ["いい天気だね。", "最近どう？", "腹が減ったな。", "聞いた？　昨日の話。", "また後でね。"]
-
-    def take_turn(self, world, name):
-        v = world.villagers[name]
-        food = [f for f in FOOD if v["inventory"].get(f, 0) > 0]
-        others = world.people_at(v["location"], exclude=name)
-        if v["hunger"] >= 6 and food:
-            run_tool(world, name, "eat", {"item": random.choice(food)})
-        elif v["energy"] <= 2:
-            run_tool(world, name, "rest", {})
-        elif random.random() < 0.15:
-            run_tool(world, name, "remember", {"note": f"{v['location']}で過ごした"})
-            run_tool(world, name, "do", {"activity": "あたりを眺めている"})
-        elif others and random.random() < 0.4:
-            run_tool(world, name, "say", {"to": random.choice(others), "message": random.choice(self.LINES)})
-        elif v["location"] != v["workplace"] and 8 <= world.hour <= 16:
-            run_tool(world, name, "move", {"destination": v["workplace"]})
-        elif v["location"] == v["workplace"] and v["energy"] > 3:
-            run_tool(world, name, "work", {})
-        else:
-            run_tool(world, name, "move", {"destination": random.choice(list(world.data["places"]))})
