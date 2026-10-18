@@ -263,9 +263,7 @@ class World:
                 move = n
             elif item == "薪":
                 move = max(0, min(n, WOOD_STORE - box.get("薪", 0)))
-            elif item in INGREDIENTS and item not in self.made_goods(name):
-                move = n  # 買ってきた食材は家で使う
-            elif item in INGREDIENTS:  # 自分で獲った・作った品は、家に少し置いて残りは売り物として持っておく
+            elif item in INGREDIENTS:  # 食材は煮炊き用に少し家に置き、残りは売り物として持っておく（本業でなくても）
                 move = max(0, min(n, FAMILY_KEEP["食材"] - box.get(item, 0)))
             else:
                 move = 0
@@ -696,8 +694,8 @@ class World:
         carried = self.villagers[name]["inventory"].get(item, 0)
         if item in self.outputs(name) and self.at_order_shop(name):
             return self.servable(name)
-        if item in self.made_goods(name) and item not in self.outputs(name):
-            return carried  # 自分で作った干物・燻製は持っている分すべて売り物
+        if item in INGREDIENTS:
+            return carried  # 食材は、家に置いた分のほかに持ち歩いている分すべてが売り物
         if item in self.outputs(name):
             box = self.store_at(name)
             shelf = box.get(item, 0) if box is not None and self.shop_owner(self.villagers[name]["location"]) == name else 0
@@ -984,6 +982,16 @@ class World:
                     want[i] = want.get(i, 0) + q
             if not any(self.food_owner(name, f) for f in MEALS) and self.home_stock(name, "パン") == 0:
                 want["パン"] = want.get("パン", 0) + 1
+        for name, v in self.villagers.items():  # 「今日も獲って（作って）くるよ」：材料のいらない仕事の人は、今日の分も出せる
+            if not self.inputs(name):
+                for item, n in v["produce"].items():
+                    have[item] = have.get(item, 0) + n * 2
+        for home in {v["home"] for v in self.villagers.values()}:  # 家の蔵にある、煮炊き用より多い食材も「売れる分」
+            box = self.data["stores"].get(home, {})
+            for item in INGREDIENTS:
+                have[item] = have.get(item, 0) + max(0, box.get(item, 0) - FAMILY_KEEP["食材"])
+            for item in ("薪",):
+                have[item] = have.get(item, 0) + max(0, box.get(item, 0) - NIGHT_WOOD * 2)
         for home in {v["home"] for v in self.villagers.values()}:  # 今夜の薪がない家
             member = next(n for n, v in self.villagers.items() if v["home"] == home)
             if self.household_stock(member, "薪") < NIGHT_WOOD:
