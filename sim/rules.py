@@ -9,6 +9,7 @@
   3. 分ける   … 家族、頼んできた人、好きな人が腹ぺこなら食事を分ける
   4. 仕入れる … 加工する人は、仕事の材料を 2 回分を目安に仕入れる
   5. 売る     … 余った品を欲しがる人に売る（食材は加工する人へ、薪は家々へ、食事は空腹な人へ）
+  0. 買い出し … 買い出し係は、家族の 1 日分（1 人朝昼 2 食）の食事を店でまとめて買い、家の蔵へ持ち帰る
   0. 晩ごはん … 夕方に酒場にいて腹が減っていれば、払える限り酒場で料理を頼んで食べる
   6. 備える   … 夜の薪がなければ買う
 
@@ -102,6 +103,9 @@ class RuleBrain:
         meal_time = world.hour in MEAL_HOURS
         has_meal = any(world.food_owner(name, f) for f in MEALS)
 
+        # 0. 買い出し係は、店で家族の 1 日分の食事をまとめて買う
+        if self.shopping_needed(world, name) > 0 and self.buy_for_family(world, name, others):
+            return True
         # 0. 夕方に酒場にいて腹が減っていれば、晩ごはんは酒場で食べる（手持ちの食べ物は明日に取っておく）
         if self.dinner(world, name, others):
             return True
@@ -137,6 +141,24 @@ class RuleBrain:
                 return True
         return False
 
+    def shopping_needed(self, world, name):
+        """買い出し係が、あと何食買えばいいか（家族 1 人あたり朝と昼の 2 食。持ち帰り中の分も数える）。"""
+        v = world.villagers[name]
+        if not v.get("shopper"):
+            return 0
+        carried = sum(v["inventory"].get(m, 0) + v.get("basket", {}).get(m, 0) for m in MEALS)
+        return len(world.family_of(name)) * 2 - world.meals_at_home(name) - carried
+
+    def buy_for_family(self, world, name, others):
+        need = self.shopping_needed(world, name)
+        for seller in others:
+            for food in MEALS:
+                if world.will_sell(seller, name, food) and world.money(name) >= world.price(food):
+                    amount = max(1, min(need, world.surplus(seller, food), world.money(name) // world.price(food)))
+                    result = run_tool(world, name, "buy", {"seller": seller, "item": food, "amount": amount})
+                    return "買った" in result
+        return False
+
     def dinner(self, world, name, others):
         """夕方、酒場で晩ごはんを頼んで食べる（1 日 1 回、払えるなら）。"""
         v = world.villagers[name]
@@ -146,7 +168,7 @@ class RuleBrain:
         if owner is None or owner == name or owner not in others or not world.villagers[owner].get("to_order"):
             return False
         dish = next((d for d in world.outputs(owner) if world.will_sell(owner, name, d)), None)
-        if dish is None or v["money"] < world.price(dish):
+        if dish is None or world.money(name) < world.price(dish):
             return False
         result = run_tool(world, name, "buy", {"seller": owner, "item": dish, "amount": 1})
         if "買った" in result:
@@ -179,7 +201,7 @@ class RuleBrain:
                 for item in items:
                     if world.will_sell(seller, name, item) and world.will_buy(name, item):
                         lot = 3 * WOOD_LOT if item == "薪" else 3
-                        amount = max(1, min(lot, world.surplus(seller, item), v["money"] // world.price(item)))
+                        amount = max(1, min(lot, world.surplus(seller, item), world.money(name) // world.price(item)))
                         run_tool(world, name, "buy", {"seller": seller, "item": item, "amount": amount})
                         return True
         return False
@@ -208,13 +230,24 @@ class RuleBrain:
             return
         if v["hunger"] >= 6 and not has_meal:
             seller_place = self.find_food_seller(world, name)
-            if seller_place and seller_place != here and v["money"] >= min(world.price(m) for m in MEALS):
+            if seller_place and seller_place != here and world.money(name) >= min(world.price(m) for m in MEALS):
                 act("move", destination=seller_place)
                 return
             if self.market_trip(world, name, minimum=1):
                 return
             if others and v["hunger"] >= 9 and not working and random.random() < 0.3:
                 act("say", to=random.choice(others), message=style(v)["beg"], small=True)
+                return
+
+        # 1.5 買い出し係：朝のうちに店へ行って家族の分を買い、持ち帰る
+        if v.get("shopper") and 8 <= world.hour <= 14:
+            if self.shopping_needed(world, name) > 0:
+                seller_place = self.find_food_seller(world, name)
+                if seller_place and seller_place != here and world.money(name) >= min(world.price(m) for m in MEALS):
+                    act("move", destination=seller_place)
+                    return
+            elif any(v.get("basket", {}).get(m, 0) for m in MEALS) and here != v["home"]:
+                act("move", destination=v["home"])  # 買った分を家の蔵へ
                 return
 
         # 2. 疲労：くたくたなら家に帰って休む
@@ -300,8 +333,8 @@ class RuleBrain:
         v = world.villagers[name]
         for seller in sorted(others, key=lambda o: -self.score(v, o)):
             for food in MEALS:
-                if world.will_sell(seller, name, food) and v["money"] >= world.price(food):
-                    amount = 2 if world.surplus(seller, food) >= 2 and v["money"] >= world.price(food) * 2 + 40 else 1
+                if world.will_sell(seller, name, food) and world.money(name) >= world.price(food):
+                    amount = 2 if world.surplus(seller, food) >= 2 and world.money(name) >= world.price(food) * 2 + 40 else 1
                     result = run_tool(world, name, "buy", {"seller": seller, "item": food, "amount": amount})
                     if "断られた" in result:
                         world.update_impression(name, seller, -1, f"{food}を売ってくれなかった。")
@@ -349,10 +382,10 @@ class RuleBrain:
             wants.append("薪")
         for item in wants:
             for seller in others:
-                if world.will_sell(seller, name, item) and v["money"] >= world.price(item):
+                if world.will_sell(seller, name, item) and world.money(name) >= world.price(item):
                     amount = 1
                     if item == "薪":  # ひと束（一晩分）を、売り手の余りと手持ちの範囲で
-                        amount = max(1, min(WOOD_LOT, world.surplus(seller, item), v["money"] // world.price(item)))
+                        amount = max(1, min(WOOD_LOT, world.surplus(seller, item), world.money(name) // world.price(item)))
                     run_tool(world, name, "buy", {"seller": seller, "item": item, "amount": amount})
                     return True
         return False
@@ -460,7 +493,7 @@ class RuleBrain:
             if here != h["at"]:
                 return False
             for seller in others:
-                if world.will_sell(seller, name, h["item"]) and v["money"] >= world.price(h["item"]):
+                if world.will_sell(seller, name, h["item"]) and world.money(name) >= world.price(h["item"]):
                     run_tool(world, name, "buy", {"seller": seller, "item": h["item"], "amount": 1})
                     return True
             return False

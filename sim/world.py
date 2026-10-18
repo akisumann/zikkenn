@@ -178,7 +178,8 @@ class World:
     def has(self, name, item):
         """name がいま手に取れる item の数（持ち物＋いる場所の在庫。注文で作る店の主人なら出せる料理の数も）。"""
         box = self.store_at(name) or {}
-        n = self.villagers[name]["inventory"].get(item, 0) + box.get(item, 0)
+        v = self.villagers[name]
+        n = v["inventory"].get(item, 0) + v.get("basket", {}).get(item, 0) + box.get(item, 0)
         if item in self.outputs(name) and self.at_order_shop(name):
             n += self.servable(name)
         return n
@@ -229,9 +230,12 @@ class World:
         if item in self.outputs(name) and self.at_order_shop(name):
             return self.serve(name, n) == n
         box = self.store_at(name) or {}
-        for _ in range(n):
+        basket = self.villagers[name].setdefault("basket", {})
+        for _ in range(n):  # 家や店の在庫 → 買い物袋 → 持ち物 の順に使う
             if box.get(item, 0) > 0:
                 box[item] -= 1
+            elif basket.get(item, 0) > 0:
+                basket[item] -= 1
             else:
                 self.villagers[name]["inventory"][item] -= 1
         return True
@@ -249,6 +253,11 @@ class World:
         box = self.store_at(name)
         if box is None:
             return
+        if v["location"] == v["home"]:  # 買い物袋の中身（自分や家族のために買った物）は、すべて家の蔵へ
+            for item, n in v.get("basket", {}).items():
+                if n > 0:
+                    self._add(box, item, n)
+            v["basket"] = {}
         inv = v["inventory"]
         for item, n in list(inv.items()):
             if n <= 0:
@@ -275,6 +284,11 @@ class World:
         if v["location"] != v["home"]:
             return
         box = self.data["stores"].setdefault(v["home"], {})
+        if not v.get("shopper") and not any(v["inventory"].get(m, 0) for m in MEALS):  # 昼の分を 1 食持って出る
+            meal = next((m for m in sorted(MEALS, key=lambda m: -SPOIL.get(m, 0)) if box.get(m, 0) > 0), None)
+            if meal:
+                box[meal] -= 1
+                self._add(v["inventory"], meal, 1)
         for item in self.made_goods(name):
             keep = NIGHT_WOOD * 2 if item == "薪" else FAMILY_KEEP["食材"] if item in INGREDIENTS else None
             if keep is None:
@@ -283,6 +297,30 @@ class World:
             if n > 0:
                 box[item] -= n
                 self._add(v["inventory"], item, n)
+
+    # ---------- 家計（家族で財布を分け合う） ----------
+
+    def family_of(self, name):
+        home = self.villagers[name]["home"]
+        return [n for n, v in self.villagers.items() if v["home"] == home]
+
+    def meals_at_home(self, name):
+        box = self.data["stores"].get(self.villagers[name]["home"], {})
+        return sum(box.get(m, 0) for m in MEALS)
+
+    def money(self, name):
+        """name が使えるお金。同じ家に住む家族の財布の合計（家計）。"""
+        home = self.villagers[name]["home"]
+        return sum(v["money"] for v in self.villagers.values() if v["home"] == home)
+
+    def pay(self, name, amount):
+        """家計から払う。払う本人の財布から先に使い、足りなければ家族の財布から。"""
+        home = self.villagers[name]["home"]
+        payers = [name] + [n for n, v in self.villagers.items() if v["home"] == home and n != name]
+        for n in payers:
+            use = min(amount, self.villagers[n]["money"])
+            self.villagers[n]["money"] -= use
+            amount -= use
 
     def home_stock(self, name, item):
         """name の家の蔵にある item の数。"""
@@ -383,7 +421,10 @@ class World:
                      + ("（とても空腹だ）" if v["hunger"] >= 8 else "")
                      + ("（くたくただ）" if v["energy"] <= 2 else ""))
         inv = "、".join(f"{k}×{n}" for k, n in v["inventory"].items() if n > 0) or "なし"
-        lines.append(f"【持ち物】{inv}、銀貨 {v['money']} 枚")
+        bag = "、".join(f"{k}×{n}" for k, n in v.get("basket", {}).items() if n > 0)
+        if bag:
+            inv += f"（買い物袋：{bag}）"
+        lines.append(f"【持ち物】{inv}、銀貨 {v['money']} 枚（家族と分け合う家計は {self.money(name)} 枚）")
         box = self.store_at(name)
         if box is not None:
             label = "家の蔵" if here == v["home"] else "店の棚"
@@ -555,7 +596,7 @@ class World:
 
     def stock(self, item):
         """村じゅうにある item の数。"""
-        return (sum(v["inventory"].get(item, 0) for v in self.villagers.values())
+        return (sum(v["inventory"].get(item, 0) + v.get("basket", {}).get(item, 0) for v in self.villagers.values())
                 + sum(box.get(item, 0) for box in self.data["stores"].values()))
 
     def act_preserve(self, name, item):
@@ -587,6 +628,7 @@ class World:
     def spoil(self):
         """夜、傷みやすい食べ物の一部が傷んで捨てられる（持ち物も、家の蔵も、店の棚も）。"""
         boxes = [(f"**{n}** の持ち物", v["inventory"]) for n, v in self.villagers.items()]
+        boxes += [(f"**{n}** の買い物袋", v["basket"]) for n, v in self.villagers.items() if v.get("basket")]
         boxes += [(f"{place}{'の棚' if self.shop_owner(place) else 'の蔵'}", box) for place, box in self.data["stores"].items()]
         for label, box in boxes:
             lost = []
@@ -643,9 +685,9 @@ class World:
         if amount <= 0:
             return "1 以上を渡すこと。"
         if item == "銀貨":
-            if v["money"] < amount:
-                return f"銀貨が足りない（{v['money']} 枚）。"
-            v["money"] -= amount
+            if self.money(name) < amount:
+                return f"銀貨が足りない（{self.money(name)} 枚）。"
+            self.pay(name, amount)
             self.villagers[to]["money"] += amount
         else:
             if not self.take(name, item, amount):
@@ -742,11 +784,11 @@ class World:
             shop = v["workplace"]
             box = self.data["stores"].get(shop, {})
             reserve = 0 if item == "薪" else self.price("薪") * WOOD_LOT * 2
-            if v["money"] - price < reserve:
+            if self.money(buyer) - price < reserve:
                 return False
             if v.get("to_order") and item != "薪" and item not in SPOIL:  # 傷まない食材は、余裕があれば少し蓄える
                 stock = box.get(item, 0) + v["inventory"].get(item, 0)
-                if stock >= 2 and v["money"] - price < SHOP_CASH:  # 料理 2 鍋分の材料費は手元に残す
+                if stock >= 2 and self.money(buyer) - price < SHOP_CASH:  # 料理 2 鍋分の材料費は手元に残す
                     return False
                 return stock < SHOP_BUFFER
             for need, n in self.inputs(buyer).items():
@@ -755,20 +797,20 @@ class World:
                     batches = -(-self.expected_demand(shop) // sum(self.recipes(buyer)[-1]["produce"].values()))
                     want = n * batches + (2 if v.get("to_order") and need != "薪" else 0)
                     have_now = sum(box.get(i, 0) + v["inventory"].get(i, 0) for i in members)
-                    if need != "薪" and have_now >= n and v["money"] - price < SHOP_CASH:
+                    if need != "薪" and have_now >= n and self.money(buyer) - price < SHOP_CASH:
                         return False  # 1 回分の材料があるなら、手元に余裕がないかぎり買い足さない
                     return have_now < max(want, n)
             return False
         if item == "薪":  # 夜の薪は一家で 10 本。今夜の分は必需品、余裕があれば何晩分か貯める
             stock = self.household_stock(buyer, "薪")
             if stock < NIGHT_WOOD:
-                return v["money"] >= price
-            return stock < WOOD_STORE and v["money"] - price * WOOD_LOT >= 40
+                return self.money(buyer) >= price
+            return stock < WOOD_STORE and self.money(buyer) - price * WOOD_LOT >= 40
         if item in MEALS:
-            return v["money"] >= price and have < 2 and v["hunger"] >= 3
+            return self.money(buyer) >= price and have < 2 and v["hunger"] >= 3
         if item in INGREDIENTS:  # 家で煮炊きする食材：家に食材がなく、薪があって懐に余裕があれば
             home_food = sum(self.home_stock(buyer, i) for i in INGREDIENTS)
-            return home_food < 2 and self.household_stock(buyer, "薪") >= COOK_WOOD * 2 and v["money"] - price >= 40
+            return home_food < 2 and self.household_stock(buyer, "薪") >= COOK_WOOD * 2 and self.money(buyer) - price >= 40
         return False
 
     def act_sell(self, name, buyer, item):
@@ -785,11 +827,11 @@ class World:
             return f"{buyer}には要らないと言われた。"
         n = 1
         if item == "薪":  # 薪はひと束（10 本）を、相手が払える分まで
-            n = min(WOOD_LOT, self.surplus(name, item), self.villagers[buyer]["money"] // self.price(item))
+            n = min(WOOD_LOT, self.surplus(name, item), self.money(buyer) // self.price(item))
         price = self.price(item) * n
         self._hand_over(name, buyer, item, n)
         v["money"] += price
-        self.villagers[buyer]["money"] -= price
+        self.pay(buyer, price)
         v["activity"] = f"{buyer}に{item}を売っている"
         self.broadcast(v["location"], f"{name}が{buyer}に{item}を売った。", exclude=name,
                        kind="trade", actor=name, to=buyer, quote=item)
@@ -810,8 +852,8 @@ class World:
         if self.uses(seller, item) and self.at_order_shop(seller):
             unit = round(unit * RETAIL_MARKUP)  # 店先で売る食材は少し上乗せ
         price = unit * amount
-        if v["money"] < price:
-            return f"銀貨が足りない（{price} 枚必要、手持ち {v['money']} 枚）。"
+        if self.money(name) < price:
+            return f"銀貨が足りない（{price} 枚必要、家計 {self.money(name)} 枚）。"
         if not self.will_sell(seller, name, item) or self.surplus(seller, item) < amount:
             v["activity"] = f"{seller}に{item}を売ってくれと頼んでいる"
             self.broadcast(v["location"], f"{name}が{seller}に{item}を売ってくれと頼んだが、断られた。",
@@ -823,7 +865,7 @@ class World:
                     shop = self.villagers[seller]["workplace"]
                     self.data.setdefault("missed", {})[shop] = self.data["missed"].get(shop, 0) + amount
             return f"{seller}に断られた。"
-        v["money"] -= price
+        self.pay(name, price)
         self.villagers[seller]["money"] += price
         self._hand_over(seller, name, item, amount)
         v["activity"] = f"{seller}から{item}を買っている"
@@ -843,7 +885,11 @@ class World:
                     sv["inventory"][item] -= 1
                 else:
                     self.store_at(seller)[item] -= 1
-        self.put(buyer, item, n)
+        if self.store_at(buyer) is None and not self.uses(buyer, item):
+            # 自分や家族のために買った物は買い物袋へ（売り物とは分ける。食べることはできる）
+            self._add(self.villagers[buyer].setdefault("basket", {}), item, n)
+        else:
+            self.put(buyer, item, n)
         shop = sv["location"]
         if self.shop_owner(shop) == seller and item in self.outputs(seller):
             self.record_sale(shop, n)
