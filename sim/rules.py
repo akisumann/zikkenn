@@ -48,7 +48,7 @@ DEFAULT_ROUTINE = {6: "広場", 8: "仕事場", 10: "仕事場", 12: "仕事場"
                    16: "自由", 18: "酒場", 20: "家"}
 MEAL_HOURS = (6, 12, 18)
 OUTDOOR = ("畑", "川辺", "森の入口")
-FREE_PLACES = ["広場", "広場", "川辺", "酒場", "パン屋", "森の入口"]
+FREE_PLACES = ["広場", "広場", "川辺", "酒場", "森の入口"]
 
 # 口調。村人ごとに seed の style で上書きする（あいさつ・相づち・うわさ・村の様子・物乞いの言い方）
 DEFAULT_STYLE = {
@@ -62,7 +62,6 @@ IDLE = {
     "広場": ["井戸のそばのベンチに腰かけている", "広場をぶらぶら歩いている"],
     "川辺": ["川面に石を投げている", "水の流れをぼんやり眺めている"],
     "酒場": ["カウンターで頬杖をついている", "酒場の喧騒に耳を傾けている"],
-    "パン屋": ["焼きたてのパンの匂いをかいでいる"],
     "森の入口": ["木々のざわめきに耳を澄ませている", "きのこを探して地面を見ている"],
     "畑": ["畝のあいだを見回っている"],
 }
@@ -168,10 +167,10 @@ class RuleBrain:
     def dinner(self, world, name, others):
         """夕方、酒場で晩ごはんを頼んで食べる（1 日 1 回、払えるなら）。"""
         v = world.villagers[name]
-        owner = world.shop_owner(v["location"])
+        owner = next((o for o in world.shop_owners(v["location"]) if world.villagers[o].get("to_order")), None)
         if world.hour not in (18, 20) or v["hunger"] < 2 or v.get("dinner_day") == world.data["day"]:
             return False
-        if owner is None or owner == name or owner not in others or not world.villagers[owner].get("to_order"):
+        if owner is None or owner == name or owner not in others:
             return False
         dish = next((d for d in world.outputs(owner) if world.will_sell(owner, name, d)), None)
         if dish is None or world.money(name) < world.price(dish):
@@ -195,9 +194,9 @@ class RuleBrain:
         return False
 
     def restock(self, world, name, others):
-        """仕事の材料を、2 回分を目安に仕入れる。"""
+        """仕事の材料（店なら仲間の分も）を、2 回分を目安に仕入れる。"""
         v = world.villagers[name]
-        for need, n in world.inputs(name).items():
+        for need, n in world.shop_inputs(name).items():
             items = CATEGORIES.get(need, [need])
             if sum(world.has(name, i) for i in items) >= n * 2 and not any(
                     q for key, q in world.data.get("orders", {}).get(v["workplace"], {}).items()
@@ -207,7 +206,7 @@ class RuleBrain:
                 for item in items:
                     if world.will_sell(seller, name, item) and world.will_buy(name, item):
                         lot = 3 * WOOD_LOT if item == "薪" else 3
-                        amount = max(1, min(lot, world.surplus(seller, item), world.money(name) // world.price(item)))
+                        amount = max(1, min(lot, world.surplus(seller, item), world.funds(name, item) // world.price(item)))
                         run_tool(world, name, "buy", {"seller": seller, "item": item, "amount": amount})
                         return True
         return False
@@ -380,7 +379,7 @@ class RuleBrain:
         いなければ家族の誰かが。買い出し係は、店に食事がなければ煮炊き用の食材も。"""
         v = world.villagers[name]
         wants = []
-        for need in world.inputs(name):
+        for need in world.shop_inputs(name):
             items = [i for i in CATEGORIES.get(need, [need]) if world.will_buy(name, i)]
             if items:
                 wants.append((items, True))
@@ -453,11 +452,13 @@ class RuleBrain:
         if world.hour < 10:
             return None
         for shop, order in world.data.get("orders", {}).items():
-            owner = world.shop_owner(shop)
-            if owner == name or world.villagers[owner]["location"] != shop:  # 主人が店にいなければ行かない
+            owners = world.shop_owners(shop)
+            here = [o for o in owners if world.villagers[o]["location"] == shop]
+            if name in owners or not here:  # 主人が誰も店にいなければ行かない
                 continue
+            owner = here[0]
             for key, q in order.items():  # 注文が「魚類」なら、生の魚・干物のどちらでも持っていく
-                if q > 0 and any(world.surplus(name, i) > 0 and world.will_buy(owner, i)
+                if q > 0 and any(world.surplus(name, i) > 0 and world.will_sell(name, owner, i) and world.will_buy(owner, i)
                                  for i in CATEGORIES.get(key, [key])):
                     return shop
         return None
@@ -668,7 +669,7 @@ class RuleBrain:
             run_tool(world, name, "preserve", {"item": self.preserve_plan(world, name)})  # 手が空いたら燻製を作る
         elif shop and world.at_order_shop(name):
             run_tool(world, name, "do", {"activity": "店番をしている（注文が来たら料理を出す）"})
-        elif shop and not world.needs_more_goods(here):
+        elif shop and not world.needs_more_goods(name):
             run_tool(world, name, "do", {"activity": "店番をしている（今日の分はもう作った）"})
         elif here == v["workplace"] and plan in ("仕事場", v["workplace"]) and v["energy"] > 2 and not lacking:
             run_tool(world, name, "work", self.talk_while_working(world, name, others))
