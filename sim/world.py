@@ -23,7 +23,7 @@ MEALS = {"料理": 5, "パン": 3}           # ちゃんとした食事。食べ
 INGREDIENTS = {"麦": 1, "魚": 1, "肉": 1}  # 食材。生でもかじれるが腹はふくれない
 FOOD = {**MEALS, **INGREDIENTS}
 CATEGORIES = {"食材": list(INGREDIENTS)}  # 仕事の材料に「どれでもいい」を指定するための分類
-PRICES = {"料理": 4, "パン": 2, "麦": 2, "魚": 3, "肉": 3, "薪": 2}  # 村の相場（銀貨）
+PRICES = {"料理": 40, "パン": 20, "麦": 20, "魚": 30, "肉": 30, "薪": 20}  # 村の相場（銀貨）
 HELP_JOBS = {"畑": {"麦": 1}, "川辺": {"魚": 1}, "森の入口": {"薪": 1}}  # 誰でもできる手伝い仕事（本業より実入りは少ない）
 KEEP = {"料理": 2, "パン": 2, "麦": 1, "魚": 1, "肉": 1, "薪": 1}  # 自分用に残す数。超えた分なら売る
 WEATHERS = [("晴れ", 5), ("曇り", 3), ("雨", 2), ("霧", 1), ("嵐", 0.5)]
@@ -293,7 +293,7 @@ class World:
         if self.uses(buyer, item):
             return v["money"] >= price and have < 4
         if item == "薪":
-            return v["money"] - price >= 3 and have < 2
+            return v["money"] - price >= 30 and have < 2
         if item in MEALS:
             return v["money"] >= price and have < 2 and v["hunger"] >= 3
         return False

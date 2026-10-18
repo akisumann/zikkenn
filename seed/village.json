@@ -33,7 +33,7 @@
         "パン": 2,
         "薪": 1
       },
-      "money": 12,
+      "money": 120,
       "impressions": {
         "ハル": [
           3,
@@ -102,7 +102,7 @@
       "inventory": {
         "パン": 1
       },
-      "money": 5,
+      "money": 50,
       "impressions": {
         "ゴロウ": [
           1,
@@ -176,7 +176,7 @@
         "薪": 2,
         "パン": 6
       },
-      "money": 15,
+      "money": 150,
       "impressions": {
         "トキジ": [
           2,
@@ -233,7 +233,7 @@
       "inventory": {
         "魚": 2
       },
-      "money": 8,
+      "money": 80,
       "impressions": {
         "ミツ": [
           3,
@@ -297,7 +297,7 @@
         "薪": 2,
         "パン": 1
       },
-      "money": 15,
+      "money": 150,
       "impressions": {
         "ミツ": [
           2,
@@ -355,7 +355,7 @@
         "薪": 2,
         "料理": 4
       },
-      "money": 15,
+      "money": 150,
       "impressions": {
         "トキジ": [
           0,
@@ -422,7 +422,7 @@
       "inventory": {
         "パン": 1
       },
-      "money": 6,
+      "money": 60,
       "impressions": {
         "ハル": [
           2,
@@ -491,7 +491,7 @@
         "薪": 3,
         "パン": 1
       },
-      "money": 9,
+      "money": 90,
       "impressions": {
         "アヤメ": [
           2,
@@ -567,7 +567,7 @@
         "肉": 2,
         "パン": 1
       },
-      "money": 10,
+      "money": 100,
       "impressions": {
         "ジン": [
           2,
@@ -622,7 +622,7 @@
       "inventory": {
         "薪": 1
       },
-      "money": 2,
+      "money": 20,
       "impressions": {
         "ジン": [
           2,

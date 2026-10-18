@@ -206,7 +206,7 @@ class RuleBrain:
         for seller in sorted(others, key=lambda o: -self.score(v, o)):
             for food in MEALS:
                 if world.will_sell(seller, name, food) and v["money"] >= world.price(food):
-                    amount = 2 if world.surplus(seller, food) >= 2 and v["money"] >= world.price(food) * 2 + 4 else 1
+                    amount = 2 if world.surplus(seller, food) >= 2 and v["money"] >= world.price(food) * 2 + 40 else 1
                     result = run_tool(world, name, "buy", {"seller": seller, "item": food, "amount": amount})
                     if "断られた" in result:
                         world.update_impression(name, seller, -1, f"{food}を売ってくれなかった。")
@@ -252,7 +252,7 @@ class RuleBrain:
         wants = []
         if world.will_buy(name, "薪") and v["inventory"].get("薪", 0) == 0:
             wants.append("薪")
-        if v["location"] == "酒場" and world.hour >= 16 and v["money"] >= 8 and random.random() < 0.5:
+        if v["location"] == "酒場" and world.hour >= 16 and v["money"] >= 80 and random.random() < 0.5:
             wants.append("料理")
         for item in wants:
             for seller in others:
