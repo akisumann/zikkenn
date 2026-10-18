@@ -14,6 +14,9 @@ STATE_PATH = ROOT / "world" / "state.json"
 CHRONICLE_DIR = ROOT / "chronicle"
 
 DAY_HOURS = [6, 8, 10, 12, 14, 16, 18, 20]  # 1 ティック = 2 時間。22 時〜翌 6 時は全員眠る
+TURN_MINUTES = 120   # 1 ティックの持ち時間
+MOVE_MINUTES = 20    # 村の中の移動は、どこへでも 20 分
+MAX_MOVES = 3        # 1 ティックに歩ける回数（それ以上は何もする時間がない）
 # 村の需要は「食べる」と「暖を取る」の二つだけ。品物はすべてそこから逆算する（README の「経済の設計」）。
 #   食材（麦・魚・肉）─┐
 #                       ├→ 加工（パン屋・酒場の台所）→ 食事（パン・料理）
@@ -126,23 +129,15 @@ class World:
     def tick(self):
         return self.data["day"] * len(DAY_HOURS) + self.data["hour_index"]
 
-    def travel_turns(self, a, b):
-        """移動にかかるターン数。同じ区画どうしか中心との行き来は 1（2 時間）、外れどうしは 2（4 時間）。"""
-        za, zb = self.data["zones"].get(a), self.data["zones"].get(b)
-        return 1 if za == zb or "中心" in (za, zb) else 2
+    def begin_turn(self, name):
+        """ターンの始め。2 時間の持ち時間を元に戻す。"""
+        self.villagers[name]["moves"] = 0
 
-    def continue_travel(self, name):
-        """遠出の途中なら、このターンは歩き続けて目的地に着く。歩いていたら True。"""
-        v = self.villagers[name]
-        travel = v.pop("travel", None)
-        if not travel:
-            return False
-        v["location"] = travel["to"]
-        v["activity"] = "やって来たところ"
-        self.broadcast(travel["to"], f"{name}がやって来た。", exclude=name)
-        self.log(f"🚶 **{name}** {travel['to']}に着いた")
-        self.put_away(name)
-        return True
+    def minutes_left(self, name):
+        return TURN_MINUTES - MOVE_MINUTES * self.villagers[name].get("moves", 0)
+
+    def can_move(self, name):
+        return self.villagers[name].get("moves", 0) < MAX_MOVES
 
     # ---------- 場所の在庫（家の蔵・店の棚） ----------
 
@@ -325,8 +320,8 @@ class World:
         lines.append("【人への印象】（-5 嫌い 〜 +5 好き）")
         lines += [f"- {k}: {i['score']:+d} {i['note']}" for k, i in v["impressions"].items()] or ["- なし"]
         others_far = [f"{n}" for n in self.villagers if n != name and n not in others]
-        lines.append("【村の場所】" + "、".join(
-            f"{p}（{'2' if self.travel_turns(here, p) == 1 else '4'}時間）" for p in self.data["places"] if p != here))
+        lines.append(f"【村の場所】（どこへでも歩いて {MOVE_MINUTES} 分。この 2 時間の残り {self.minutes_left(name)} 分）" + "、".join(
+            p for p in self.data["places"] if p != here))
         lines.append("【ほかの村人】" + "、".join(others_far))
         return "\n".join(lines)
 
@@ -338,20 +333,17 @@ class World:
             return f"「{destination}」という場所はない。行ける場所: " + "、".join(self.data["places"])
         if destination == v["location"]:
             return "もうそこにいる。"
+        if not self.can_move(name):
+            return "この 2 時間はもう歩き回る時間がない。"
         src = v["location"]
+        v["moves"] = v.get("moves", 0) + 1
         self.broadcast(src, f"{name}が{destination}へ向かった。", exclude=name)
-        if self.travel_turns(src, destination) == 2:  # 遠出：次のターンも歩いて、着くのはその後
-            v["location"] = "道中"
-            v["travel"] = {"to": destination}
-            v["activity"] = f"{destination}へ向かって歩いている"
-            self.log(f"🚶 **{name}** {src} → {destination}（遠いので 4 時間かかる）")
-            return f"{destination}へ向かって歩いている。着くのは次の時間だ。"
         v["location"] = destination
         v["activity"] = "やって来たところ"
         self.broadcast(destination, f"{name}がやって来た。", exclude=name)
         self.log(f"🚶 **{name}** {src} → {destination}")
         self.put_away(name)
-        return f"{destination}に着いた。"
+        return f"{destination}に着いた（この 2 時間の残り {self.minutes_left(name)} 分）。"
 
     def act_say(self, name, to, message, small=False):
         v = self.villagers[name]
@@ -392,16 +384,25 @@ class World:
         for item, n in recipe["produce"].items():
             if self.data["weather"] in ("雨", "嵐") and v["workplace"] in ("畑", "川辺", "森の入口"):
                 n = max(1, n // 2)
-            n += bonus
+            n = self._scale(name, n + bonus)
+            if n <= 0:
+                continue
             self.put(name, item, n)
             gained.append(f"{item}×{n}")
             if self.surplus(name, item) >= RESERVE.get(item, 99):
                 self.note(name, item, "余り")
+        if not gained:
+            return "歩き回って時間がなく、仕事にならなかった。"
         v["energy"] = max(0, v["energy"] - 1)
         v["activity"] = f"{v['job']}の仕事をしている"
         self.broadcast(v["location"], f"{name}が仕事をしている。", exclude=name)
         self.log(f"🔨 **{name}** 働いた（{'、'.join(gained)}）" + ("　続けて働いてはかどった" if bonus else ""))
         return f"働いて {'、'.join(gained)} を得た。" + ("続けて働いたのではかどった。" if bonus else "")
+
+    def _scale(self, name, n):
+        """歩いた分だけ働く時間が減る。残り時間に応じて実入りを減らす（端数は確率で丸める）。"""
+        x = n * self.minutes_left(name) / TURN_MINUTES
+        return int(x) + (random.random() < x - int(x))
 
     def _streak(self, name):
         """同じ仕事場で続けて働くと、段取りがよくなって実入りが 1 増える。"""
@@ -416,9 +417,13 @@ class World:
         bonus = self._streak(name)
         gained = []
         for item, n in HELP_JOBS[place].items():
-            n += bonus
+            n = self._scale(name, n + bonus)
+            if n <= 0:
+                continue
             v["inventory"][item] = v["inventory"].get(item, 0) + n
             gained.append(f"{item}×{n}")
+        if not gained:
+            return "歩き回って時間がなく、手伝いにならなかった。"
         v["energy"] = max(0, v["energy"] - 1)
         v["activity"] = f"{place}で手伝い仕事をしている"
         self.broadcast(place, f"{name}が手伝い仕事をしている。", exclude=name)
@@ -762,7 +767,6 @@ class World:
         for name, v in self.villagers.items():
             homes.setdefault(v["home"], []).append(name)
             v["location"] = v["home"]
-            v.pop("travel", None)
             self.put_away(name)
         for home, family in homes.items():
             # 一家で薪を 1 本燃やせば、全員が暖かく眠れる。蔵の薪から使い、なければ誰かの持ち歩き分を使う
@@ -809,7 +813,6 @@ class World:
         for name, v in self.villagers.items():
             self._breakfast(name)
             v["location"] = ASSEMBLY_PLACE
-            v.pop("travel", None)
             v["activity"] = "朝礼に出ている"
         have, want = {}, {}
         orders = self.data["orders"] = {}

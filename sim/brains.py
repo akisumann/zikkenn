@@ -31,8 +31,6 @@ I = {"type": "integer"}
 
 # この 2 時間の過ごし方を決めるツール。どれか 1 つを使うとターンが終わる。
 ACTION_TOOLS = [
-    _tool("move", "別の場所へ移動する。近い場所は 2 時間、遠い場所（村の外れどうし）は 4 時間かかる。", {
-        "destination": {**S, "description": "村の場所の名前"}}),
     _tool("say", "その場にいる人に話しかける。その場の全員に聞こえる。", {
         "to": {**S, "description": "話しかける相手の名前。全員に向けるなら「みんな」、独り言なら「ひとりごと」"},
         "message": {**S, "description": "口に出すセリフ（あなたらしい口調で、1〜3 文）"},
@@ -52,6 +50,8 @@ ACTION_TOOLS = [
 ]
 # ついでにできる小さな用事。2 時間を使わず、1 回のターンで QUICK_LIMIT 回まで使える。
 QUICK_TOOLS = [
+    _tool("move", "別の場所へ移動する。村の中はどこへでも 20 分（2 時間のうち 3 回まで）。着いた先で続けて行動できる。", {
+        "destination": {**S, "description": "村の場所の名前"}}),
     _tool("eat", "持っている食べ物を 1 つ食べる。", {"item": {**S, "description": "料理・サンドイッチ・パン・燻製肉・干物。麦・魚・肉は生では食べられない（家で cook する）"}}),
     _tool("give", "その場にいる人に物や銀貨を渡す。取引や贈り物に使う。", {
         "to": S, "item": {**S, "description": "持ち物の名前、または「銀貨」"}, "amount": I,
@@ -160,8 +160,9 @@ def system_prompt(world, name):
 
 ## この世界での過ごし方
 これはシミュレーションです。2 時間ごとに、あなたは「いまの状況」を受け取り、次の 2 時間に何をするかをツールで決めます。
-- 行動ツール（move / say / work / cook / preserve / rest / do）は 1 回につき 1 つだけ使えます。使った時点でこの 2 時間は終わります。
+- 行動ツール（say / work / cook / preserve / rest / do）は 1 回につき 1 つだけ使えます。使った時点でこの 2 時間は終わります。
 - 小さな用事（eat / give / buy / sell）は 2 時間を使わず、行動の前に {QUICK_LIMIT} つまでできます。
+- 移動（move）は村の中ならどこへでも 20 分で、2 時間のうち 3 回まで。歩いた分だけ、働ける時間（実入り）が減ります。
 - remember と update_impression は心の中の動きなので、行動の前に何度でも使えます。大事な出来事や秘密、約束は remember に残してください。あなたが明日以降に思い出せるのは、記憶メモだけです。
 - 空腹が 10 に近づくとつらくなります。食事はパン屋のパン・サンドイッチと酒場の料理で、麦・魚・肉・薪を材料に作られます。食材は家で薪を使って煮炊きしても食べられますが、薪 1 本で 1 人前なので、店より薪を食います。食べ物は自分で作るか、人から買うか、分けてもらいます。村の相場は状況欄に出ます。値引きや物々交換は話し合いと give で行ってください。
 - 家族の食べ物は家族みんなのものです。家にいるときは、家族の誰が持っている食べ物でも食べられます。家族とは売り買いせず、分け合います。
@@ -189,8 +190,7 @@ class ClaudeBrain:
         self.client = anthropic.Anthropic()
 
     def take_turn(self, world, name):
-        if world.continue_travel(name):  # 遠出の途中なら、このターンは歩くだけ
-            return
+        world.begin_turn(name)
         messages = [{"role": "user", "content": world.perceive(name)}]
         system = system_prompt(world, name)
         quick_used = 0
@@ -222,7 +222,7 @@ class ClaudeBrain:
                 elif block.name in QUICK_NAMES and quick_used >= QUICK_LIMIT:
                     text = f"小さな用事は 1 回に {QUICK_LIMIT} つまで。あとは行動を 1 つ選ぶこと。"
                 else:
-                    quick_used += block.name in QUICK_NAMES
+                    quick_used += block.name in QUICK_NAMES and block.name != "move"
                     text = run_tool(world, name, block.name, block.input)
                     acted = acted or block.name in ACTION_NAMES
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": text})

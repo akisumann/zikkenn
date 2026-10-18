@@ -34,6 +34,7 @@
 import random
 
 from .brains import QUICK_LIMIT, run_tool
+from .world import MAX_MOVES
 from .world import CATEGORIES, DAY_HOURS, HELP_JOBS, INGREDIENTS, MEALS, PRESERVE, RESERVE, SPOIL
 
 # 時間割の既定値。「家」「仕事場」「自由」か、場所の名前を書く。seed の routine で上書きできる
@@ -66,14 +67,18 @@ RAINY = ["雨音を聞きながら道具の手入れをしている", "雨宿り
 
 class RuleBrain:
     def take_turn(self, world, name):
-        if world.continue_travel(name):  # 遠出の途中なら、このターンは歩くだけ
-            return
+        world.begin_turn(name)
         self.react(world, name)
-        for _ in range(QUICK_LIMIT):  # ついでの用事を済ませてから
-            if not self.errand(world, name):
-                break
         self.morning_talk(world, name)
-        self.main_action(world, name)  # この 2 時間の過ごし方を 1 つ選ぶ
+        v = world.villagers[name]
+        for _ in range(MAX_MOVES + 1):
+            for _ in range(QUICK_LIMIT):  # ついでの用事を済ませてから
+                if not self.errand(world, name):
+                    break
+            moves = v.get("moves", 0)
+            self.main_action(world, name)  # この 2 時間の過ごし方を 1 つ選ぶ
+            if v.get("moves", 0) == moves:  # 移動（20 分）なら、着いた先で続きをする
+                break
 
     def morning_talk(self, world, name):
         """朝礼の場で、まず家族と話す（時間は使わない）。"""
@@ -204,9 +209,8 @@ class RuleBrain:
             if here == place:
                 act("preserve", item=item)
                 return
-            if world.travel_turns(here, place) == 1:
-                act("move", destination=place)
-                return
+            act("move", destination=place)
+            return
 
         # 3.8 店に注文された品を持っていれば、届けに行く
         shop = self.delivery_target(world, name)
@@ -320,11 +324,11 @@ class RuleBrain:
         """持っている品を注文している店（仕事を一区切りした 10 時以降）。"""
         if world.hour < 10:
             return None
-        v = world.villagers[name]
         for shop, order in world.data.get("orders", {}).items():
-            if world.shop_owner(shop) == name:
+            owner = world.shop_owner(shop)
+            if owner == name or world.villagers[owner]["location"] != shop:  # 主人が店にいなければ行かない
                 continue
-            if any(q > 0 and world.surplus(name, i) > 0 for i, q in order.items()):
+            if any(q > 0 and world.surplus(name, i) > 0 and world.will_buy(owner, i) for i, q in order.items()):
                 return shop
         return None
 
@@ -463,7 +467,7 @@ class RuleBrain:
                      if not any(i in world.outputs(name) for i in out)
                      and any(news.get(i, [None])[0] == "不足" for i in out)]
             if short:
-                job = min(short, key=lambda p: world.travel_turns(v["home"], p))
+                job = short[0]
                 world.log(f"🗓 **{name}** は今日は{job}を手伝うことにした（{'・'.join(over)}が余っているので）")
             elif self.preserve_plan(world, name):
                 item = self.preserve_plan(world, name)
